@@ -54,7 +54,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "D:\storage" | Out-Null
 
       # ─────────────────────────────────────────────
-      # 3. CONFIGURAR RDP
+      # 2. CONFIGURAR RDP
       # ─────────────────────────────────────────────
       - name: Configure RDP Settings
         run: |
@@ -73,7 +73,7 @@ jobs:
           Write-Host "RDP configured." -ForegroundColor Green
 
       # ─────────────────────────────────────────────
-      # 4. CREAR USUARIO RDP
+      # 3. CREAR USUARIO RDP
       # ─────────────────────────────────────────────
       - name: Create RDP User
         run: |
@@ -101,6 +101,102 @@ jobs:
 
           "RDP_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "RDP user created." -ForegroundColor Green
+
+      # ─────────────────────────────────────────────
+      # 4. INSTALAR CURSOR ESTILO macOS
+      # ─────────────────────────────────────────────
+      - name: Install macOS Style Cursor
+        run: |
+          Write-Host "=== Installing macOS Style Cursor ===" -ForegroundColor Cyan
+
+          $cursorUrl = "https://github.com/ful1e5/apple_cursor/releases/download/v2.0.1/macOS-Windows.zip"
+          $zipFile   = "$env:TEMP\macOS-Windows.zip"
+          $extractDir = "$env:TEMP\macOS-Windows"
+
+          # Download cursor pack
+          try {
+            Invoke-WebRequest -Uri $cursorUrl -OutFile $zipFile -UseBasicParsing -MaximumRedirection 5
+            Write-Host "Cursor pack downloaded successfully." -ForegroundColor Green
+          } catch {
+            Write-Error "Failed to download cursor pack: $_"; exit 1
+          }
+
+          # Extract
+          if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+          Expand-Archive -Path $zipFile -DestinationPath $extractDir -Force
+
+          # Find the actual cursor folder (may be nested)
+          $cursorSource = Get-ChildItem -Path $extractDir -Recurse -Filter "*.cur" | Select-Object -First 1
+          if (-not $cursorSource) {
+            Write-Error "No .cur files found in the downloaded package."
+            Get-ChildItem -Path $extractDir -Recurse | Format-Table
+            exit 1
+          }
+          $cursorFolder = $cursorSource.DirectoryName
+          Write-Host "Cursor files found in: $cursorFolder" -ForegroundColor Green
+
+          # Create system cursor directory
+          $cursorDest = "C:\Windows\Cursors\macOS"
+          New-Item -ItemType Directory -Path $cursorDest -Force | Out-Null
+          Copy-Item -Path "$cursorFolder\*" -Destination $cursorDest -Recurse -Force
+          Write-Host "Cursors copied to: $cursorDest" -ForegroundColor Green
+
+          # Helper function to set cursor registry values
+          function Set-CursorRegistry {
+            param([string]$RegPath)
+            $cursorMap = @{
+              "Arrow"       = "Arrow.cur"
+              "Help"        = "Help.cur"
+              "AppStarting" = "AppStarting.ani"
+              "Wait"        = "Wait.ani"
+              "Crosshair"   = "Cross.cur"
+              "IBeam"       = "IBeam.cur"
+              "NWPen"       = "NWPen.cur"
+              "No"          = "No.cur"
+              "SizeNS"      = "SizeNS.cur"
+              "SizeWE"      = "SizeWE.cur"
+              "SizeNWSE"    = "SizeNWSE.cur"
+              "SizeNESW"    = "SizeNESW.cur"
+              "SizeAll"     = "SizeAll.cur"
+              "UpArrow"     = "UpArrow.cur"
+              "Hand"        = "Hand.cur"
+              "Person"      = "Person.cur"
+              "Pin"         = "Pin.cur"
+            }
+            foreach ($key in $cursorMap.Keys) {
+              $filePath = Join-Path $cursorDest $cursorMap[$key]
+              if (Test-Path $filePath) {
+                Set-ItemProperty -Path $RegPath -Name $key -Value $filePath -Force -ErrorAction SilentlyContinue
+              }
+            }
+            Set-ItemProperty -Path $RegPath -Name "(Default)" -Value "macOS Cursors" -Force -ErrorAction SilentlyContinue
+          }
+
+          # Apply to DEFAULT profile (so new users like RDP inherit it)
+          $defaultPath = "Registry::HKEY_USERS\.DEFAULT\Control Panel\Cursors"
+          Set-CursorRegistry -RegPath $defaultPath
+          Write-Host "Cursor theme applied to DEFAULT user profile." -ForegroundColor Green
+
+          # Apply to current user profile as well
+          $currentPath = "HKCU:\Control Panel\Cursors"
+          Set-CursorRegistry -RegPath $currentPath
+          Write-Host "Cursor theme applied to current user profile." -ForegroundColor Green
+
+          # Force system to refresh cursor settings
+          rundll32.exe user32.dll,UpdatePerUserSystemParameters
+          Start-Sleep -Seconds 2
+          # Also broadcast a settings change message
+          Add-Type @"
+            using System; using System.Runtime.InteropServices;
+            public class CursorUpdate {
+              [DllImport("user32.dll", SetLastError = true)]
+              public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, string pvParam, uint fWinIni);
+            }
+"@
+          [CursorUpdate]::SystemParametersInfo(0x2029, 0, $null, 0x01 -bor 0x02) | Out-Null
+          [CursorUpdate]::SystemParametersInfo(0x202A, 0, $null, 0x01 -bor 0x02) | Out-Null
+
+          Write-Host "=== macOS Cursor installed successfully! ===" -ForegroundColor Green
 
       # ─────────────────────────────────────────────
       # 5. INSTALAR TAILSCALE
@@ -153,13 +249,17 @@ jobs:
           Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Cyan
           Write-Host "║         VERIFICATION REPORT                      ║" -ForegroundColor Cyan
           Write-Host "╠══════════════════════════════════════════════════╣" -ForegroundColor Cyan
-          
+
           Write-Host "║  NODE.JS:" -NoNewline
           try { node --version 2>$null; Write-Host " ✓" -ForegroundColor Green } catch { Write-Host " ✗" -ForegroundColor Red }
-          
+
           Write-Host "║  NPM:    " -NoNewline
           try { npm --version 2>$null; Write-Host " ✓" -ForegroundColor Green } catch { Write-Host " ✗" -ForegroundColor Red }
-          
+
+          Write-Host "║  CURSOR: " -NoNewline
+          $c = Get-ItemProperty -Path "HKCU:\Control Panel\Cursors" -Name "(Default)" -ErrorAction SilentlyContinue
+          if ($c.'(Default)' -like "*macOS*") { Write-Host " ✓ macOS Style" -ForegroundColor Green } else { Write-Host " ✗" -ForegroundColor Red }
+
           Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
           Write-Host ""
 
@@ -176,6 +276,9 @@ jobs:
           Write-Host "║  User:     RDP"
           Write-Host "║  Password: $env:RDP_PASSWORD"
           Write-Host "╠══════════════════════════════════════════════════╣" -ForegroundColor Cyan
+          Write-Host "║  FEATURES                                        ║" -ForegroundColor Cyan
+          Write-Host "║  • macOS Style Mouse Cursor                      ║"
+          Write-Host "╠══════════════════════════════════════════════════╣" -ForegroundColor Cyan
           Write-Host "║  STORAGE                                         ║" -ForegroundColor Cyan
           Write-Host "║  C: ~14GB (sistema)                              ║"
           Write-Host "║  D: ~70GB (runner disk)                          ║"
@@ -190,4 +293,4 @@ jobs:
             $i++
             Write-Host "Keep alive... ($i minutos)" -ForegroundColor DarkGray
           }
-          
+

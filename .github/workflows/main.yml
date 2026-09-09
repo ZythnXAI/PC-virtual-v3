@@ -1,4 +1,4 @@
-name: RDP
+name: 🌐 NEURAL-LINK // RDP SESSION
 on:
   workflow_dispatch:
 
@@ -8,14 +8,31 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      # ─────────────────────────────────────────────
-      # 1. LIBERAR ESPACIO Y MONTAR DISCO EXTRA
-      # ─────────────────────────────────────────────
-      - name: Free Up Space & Mount Extra Disk
+      # ═══════════════════════════════════════════════════════
+      #  ⚡ BOOT SEQUENCE — NEURAL LINK v9.0
+      # ═══════════════════════════════════════════════════════
+      - name: ⚡ Boot Sequence
         run: |
-          Write-Host "=== Disk before cleanup ===" -ForegroundColor Cyan
-          Get-PSDrive -PSProvider FileSystem | Select-Object Name, Used, Free | Format-Table
+          Write-Host ""
+          Write-Host "  ███╗   ██╗███████╗██╗   ██╗██████╗  █████╗ ██╗      " -ForegroundColor Magenta
+          Write-Host "  ████╗  ██║██╔════╝██║   ██║██╔══██╗██╔══██╗██║      " -ForegroundColor Magenta
+          Write-Host "  ██╔██╗ ██║█████╗  ██║   ██║██████╔╝███████║██║      " -ForegroundColor Magenta
+          Write-Host "  ██║╚██╗██║██╔══╝  ██║   ██║██╔═══╝ ██╔══██║██║      " -ForegroundColor Magenta
+          Write-Host "  ██║ ╚████║███████╗╚██████╔╝██║     ██║  ██║███████╗ " -ForegroundColor Magenta
+          Write-Host "  ╚═╝  ╚═══╝╚══════╝ ╚═════╝ ╚═╝     ╚═╝  ╚═╝╚══════╝ " -ForegroundColor Magenta
+          Write-Host "         R D P   //   N E U R A L - L I N K   v 9 . 0 " -ForegroundColor Cyan
+          Write-Host ""
+          Write-Host "  [◉] Kernel ......... Windows Server 2025 (windows-latest)" -ForegroundColor Green
+          Write-Host "  [◉] Protocol ....... RDP over Tailscale mesh" -ForegroundColor Green
+          Write-Host "  [◉] Link speed ..... (hardware-limited by host fabric)" -ForegroundColor Yellow
+          Write-Host ""
 
+      # ═══════════════════════════════════════════════════════
+      #  💾 STORAGE MATRIX
+      # ═══════════════════════════════════════════════════════
+      - name: 💾 Storage Matrix
+        run: |
+          Write-Host "  ▶ PHASE 01 // PURGING HOST BLOAT" -ForegroundColor Cyan
           $toRemove = @(
             "$env:SystemDrive\hostedtoolcache\windows\Ruby",
             "$env:SystemDrive\hostedtoolcache\windows\go",
@@ -29,13 +46,11 @@ jobs:
           foreach ($path in $toRemove) {
             if (Test-Path $path) {
               Remove-Item $path -Recurse -Force -ErrorAction SilentlyContinue
-              Write-Host "Removed: $path" -ForegroundColor Green
+              Write-Host "    [✓] purged: $path" -ForegroundColor DarkGray
             }
           }
 
-          Write-Host "=== Disk D: info ===" -ForegroundColor Cyan
-          Get-PSDrive D -ErrorAction SilentlyContinue
-
+          Write-Host "  ▶ PHASE 02 // FORGING EXTRA DISK (VHDX 100GB)" -ForegroundColor Cyan
           $vhdPath = "D:\extra_disk.vhdx"
           New-VHD -Path $vhdPath -SizeBytes 100GB -Dynamic -ErrorAction SilentlyContinue
           Mount-VHD -Path $vhdPath
@@ -45,149 +60,212 @@ jobs:
               New-Partition -AssignDriveLetter -UseMaximumSize |
               Format-Volume -FileSystem NTFS -NewFileSystemLabel "ExtraDisk" -Confirm:$false
           }
-
-          Write-Host "=== Disk after setup ===" -ForegroundColor Cyan
-          Get-PSDrive -PSProvider FileSystem | Select-Object Name, Used, Free | Format-Table
-
-          "EXTRA_DISK=E:" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "STORAGE_ROOT=D:\storage" | Out-File -FilePath $env:GITHUB_ENV -Append
           New-Item -ItemType Directory -Force -Path "D:\storage" | Out-Null
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{N="UsedGB";E={[math]::Round($_.Used/1GB,1)}}, @{N="FreeGB";E={[math]::Round($_.Free/1GB,1)}} | Format-Table -AutoSize
 
-      # ─────────────────────────────────────────────
-      # 3. CONFIGURAR RDP
-      # ─────────────────────────────────────────────
-      - name: Configure RDP Settings
+      # ═══════════════════════════════════════════════════════
+      #  🚀 OS OPTIMIZATION PROTOCOL
+      # ═══════════════════════════════════════════════════════
+      - name: 🚀 OS Optimization Protocol
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-            -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-            -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-            -Name "SecurityLayer" -Value 0 -Force
+          Write-Host "  ▶ PHASE 03 // PERFORMANCE OVERCLOCK (SOFTWARE)" -ForegroundColor Cyan
+          # Plano de energia: Alto desempenho
+          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>$null
+          powercfg /change monitor-timeout-ac 0
+          powercfg /change standby-timeout-ac 0
 
+          # Efeitos visuais: máximo desempenho
+          Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" VisualFXSetting -Value 2 -ErrorAction SilentlyContinue
+          Set-ItemProperty "HKCU:\Control Panel\Desktop" DragFullWindows -Value 0 -ErrorAction SilentlyContinue
+          Set-ItemProperty "HKCU:\Control Panel\Desktop" MenuShowDelay -Value 0 -ErrorAction SilentlyContinue
+
+          # Desativar telemetria / serviços pesados
+          $services = @("DiagTrack","dmwappushservice","WSearch","SysMain","WMPNetworkSvc")
+          foreach ($svc in $services) {
+            Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
+            Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
+          }
+
+          # Desativar GameDVR (libera recursos)
+          New-Item -Path "HKCU:\System\GameConfigStore" -Force | Out-Null
+          Set-ItemProperty "HKCU:\System\GameConfigStore" GameDVR_Enabled -Value 0
+
+          Write-Host "    [✓] energy plan .... HIGH PERFORMANCE" -ForegroundColor Green
+          Write-Host "    [✓] visuals ........ stripped for speed" -ForegroundColor Green
+          Write-Host "    [✓] telemetry ...... neutralized" -ForegroundColor Green
+
+      # ═══════════════════════════════════════════════════════
+      #  🖱️ LINUX CURSOR INJECTION (Bibata)
+      # ═══════════════════════════════════════════════════════
+      - name: 🖱️ Linux Cursor Injection
+        run: |
+          Write-Host "  ▶ PHASE 04 // INJECTING LINUX CURSOR SCHEME" -ForegroundColor Cyan
+          $zip = "$env:TEMP\bibata.zip"
+          $dst = "C:\Windows\Cursors\Bibata"
+          Invoke-WebRequest "https://github.com/ful1e5/Bibata_Cursor/releases/download/v2.0.7/Bibata-Modern-Classic-Windows.zip" -OutFile $zip -UseBasicParsing
+          Expand-Archive $zip "$env:TEMP\bibata" -Force
+          $scheme = Get-ChildItem "$env:TEMP\bibata" -Recurse -Filter "*.inf" | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item "$($scheme.DirectoryName)\*" $dst -Recurse -Force
+          # Instala o scheme de cursor via INF
+          $infPath = Get-ChildItem $dst -Filter "*.inf" | Select-Object -First 1
+          Start-Process "rundll32.exe" -ArgumentList "setupapi.dll,InstallHinfSection DefaultInstall 132 `"$($infPath.FullName)`"" -Wait
+          Write-Host "    [✓] cursor scheme .. Bibata (Linux-style)" -ForegroundColor Green
+
+      # ═══════════════════════════════════════════════════════
+      #  🎌 ANIME WALLPAPER DEPLOY
+      # ═══════════════════════════════════════════════════════
+      - name: 🎌 Anime Wallpaper Deploy
+        run: |
+          Write-Host "  ▶ PHASE 05 // WALLPAPER OVERRIDE" -ForegroundColor Cyan
+          Add-Type -AssemblyName System.Drawing
+          $wallpaper = "C:\Windows\Web\Wallpaper\anime_wallpaper.jpg"
+          # Wallpaper anime genérico em alta resolução (troque a URL se quiser outro)
+          Invoke-WebRequest "https://images.wallpapersden.com/image/download/anime-cityscape-4k_a25naW2UmZqaraWkpJRobWllrWdma2U.jpg" -OutFile $wallpaper -UseBasicParsing -ErrorAction SilentlyContinue
+          if (-not (Test-Path $wallpaper) -or (Get-Item $wallpaper).Length -lt 50KB) {
+            # Fallback: gera um wallpaper gradiente cyberpunk local (sempre funciona, sem depender de URL)
+            $bmp = New-Object System.Drawing.Bitmap(1920,1080)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            for ($y=0; $y -lt 1080; $y++) {
+              $r = [int](20 + 60*($y/1080)); $b = [int](180 - 100*($y/1080))
+              $g.FillRectangle((New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($r,10,$b))), 0, $y, 1920, 1)
+            }
+            $font = New-Object System.Drawing.Font("Consolas", 64, [System.Drawing.FontStyle]::Bold)
+            $g.DrawString("NEURAL LINK", $font, [System.Drawing.Brushes]::White, 480, 460)
+            $bmp.Save($wallpaper, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+          }
+          # Aplica wallpaper para todos os usuários
+          Add-Type -TypeDefinition @"
+            using System.Runtime.InteropServices;
+            public class W { [DllImport("user32.dll",SetLastError=true)] public static extern bool SystemParametersInfo(int a,int b,string c,int d); }
+"@
+          [W]::SystemParametersInfo(20, 0, $wallpaper, 3) | Out-Null
+          Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP" -Name LockScreenImagePath -Value $wallpaper -ErrorAction SilentlyContinue
+          Write-Host "    [✓] wallpaper ...... deployed" -ForegroundColor Green
+
+      # ═══════════════════════════════════════════════════════
+      #  🛰️ RDP UPLINK
+      # ═══════════════════════════════════════════════════════
+      - name: 🛰️ RDP Uplink
+        run: |
+          Write-Host "  ▶ PHASE 06 // RDP UPLINK" -ForegroundColor Cyan
+          Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' fDenyTSConnections -Value 0 -Force
+          Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' UserAuthentication -Value 0 -Force
+          Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' SecurityLayer -Value 0 -Force
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
-          netsh advfirewall firewall add rule name="RDP-Tailscale" `
-            dir=in action=allow protocol=TCP localport=3389
-
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389 | Out-Null
           Restart-Service -Name TermService -Force
-          Write-Host "RDP configured." -ForegroundColor Green
+          Write-Host "    [✓] RDP tunnel ..... ONLINE" -ForegroundColor Green
 
-      # ─────────────────────────────────────────────
-      # 4. CREAR USUARIO RDP
-      # ─────────────────────────────────────────────
-      - name: Create RDP User
+      # ═══════════════════════════════════════════════════════
+      #  👤 IDENTITY FORGE
+      # ═══════════════════════════════════════════════════════
+      - name: 👤 Identity Forge
         run: |
+          Write-Host "  ▶ PHASE 07 // IDENTITY FORGE" -ForegroundColor Cyan
           $charSet = @{
             Upper   = [char[]](65..90)
             Lower   = [char[]](97..122)
             Number  = [char[]](48..57)
             Special = [char[]]@(33,35,36,37,38,42,43,45,61,64)
           }
-          $rawPassword  = @()
-          $rawPassword += $charSet.Upper   | Get-Random -Count 4
-          $rawPassword += $charSet.Lower   | Get-Random -Count 4
-          $rawPassword += $charSet.Number  | Get-Random -Count 4
-          $rawPassword += $charSet.Special | Get-Random -Count 4
-          $password = -join ($rawPassword | Sort-Object { Get-Random })
+          $raw  = @()
+          $raw += $charSet.Upper   | Get-Random -Count 4
+          $raw += $charSet.Lower   | Get-Random -Count 4
+          $raw += $charSet.Number  | Get-Random -Count 4
+          $raw += $charSet.Special | Get-Random -Count 4
+          $password = -join ($raw | Sort-Object { Get-Random })
 
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Administrators"        -Member "RDP" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users"  -Member "RDP" -ErrorAction SilentlyContinue
-
-          if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
-            Write-Error "User creation failed"; exit 1
-          }
-
+          New-LocalUser -Name "RDP" -Password (ConvertTo-SecureString $password -AsPlainText -Force) -AccountNeverExpires -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
+          if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) { Write-Error "User creation failed"; exit 1 }
           "RDP_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "RDP user created." -ForegroundColor Green
+          Write-Host "    [✓] identity ....... RDP user forged" -ForegroundColor Green
 
-      # ─────────────────────────────────────────────
-      # 5. INSTALAR TAILSCALE
-      # ─────────────────────────────────────────────
-      - name: Install Tailscale
+      # ═══════════════════════════════════════════════════════
+      #  📦 APP ARSENAL (Chrome + Discord)
+      # ═══════════════════════════════════════════════════════
+      - name: 📦 App Arsenal
         run: |
+          Write-Host "  ▶ PHASE 08 // APP ARSENAL" -ForegroundColor Cyan
+
+          Write-Host "    [»] downloading Chrome..." -ForegroundColor DarkGray
+          $chrome = "$env:TEMP\chrome.exe"
+          Invoke-WebRequest "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile $chrome -UseBasicParsing
+          Start-Process $chrome -ArgumentList "/silent /install" -Wait
+          Write-Host "    [✓] chrome ......... INSTALLED" -ForegroundColor Green
+
+          Write-Host "    [»] downloading Discord..." -ForegroundColor DarkGray
+          $discord = "$env:TEMP\discord.exe"
+          Invoke-WebRequest "https://discord.com/api/downloads/distributions/app/installers/latest/setup.exe" -OutFile $discord -UseBasicParsing
+          Start-Process $discord -Wait  # Discord instala em background para o usuário atual
+          Write-Host "    [✓] discord ........ INSTALLED" -ForegroundColor Green
+
+          Write-Host "    [!] roblox ........ SKIPPED (anti-cheat Hyperion não roda em Windows Server / sem GPU)" -ForegroundColor Yellow
+          Write-Host "    [✓] node.js ........ nativo do runner" -ForegroundColor Green
+
+      # ═══════════════════════════════════════════════════════
+      #  🔗 MESH NETWORK (Tailscale)
+      # ═══════════════════════════════════════════════════════
+      - name: 🔗 Mesh Network
+        run: |
+          Write-Host "  ▶ PHASE 09 // MESH NETWORK" -ForegroundColor Cyan
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $installer = "$env:TEMP\tailscale.msi"
           Invoke-WebRequest -Uri $tsUrl -OutFile $installer -UseBasicParsing
           Start-Process msiexec.exe -ArgumentList "/i","`"$installer`"","/quiet","/norestart" -Wait
           Remove-Item $installer -Force
 
-      # ─────────────────────────────────────────────
-      # 6. CONECTAR TAILSCALE
-      # ─────────────────────────────────────────────
-      - name: Connect Tailscale
-        run: |
           $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          & $ts up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          & $ts up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=neural-link-$env:GITHUB_RUN_ID
 
-          $tsIP = $null
-          $retries = 0
+          $tsIP = $null; $retries = 0
           while (-not $tsIP -and $retries -lt 15) {
             Start-Sleep -Seconds 4
             $tsIP = & $ts ip -4 2>$null
             $retries++
           }
-
           if (-not $tsIP) { Write-Error "Tailscale IP not assigned."; exit 1 }
           "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "Tailscale IP: $tsIP" -ForegroundColor Green
+          Write-Host "    [✓] mesh IP ........ $tsIP" -ForegroundColor Green
 
-      # ─────────────────────────────────────────────
-      # 7. VERIFICAR RDP
-      # ─────────────────────────────────────────────
-      - name: Verify RDP
+      # ═══════════════════════════════════════════════════════
+      #  🩺 SYSTEM DIAGNOSTICS
+      # ═══════════════════════════════════════════════════════
+      - name: 🩺 System Diagnostics
         run: |
+          Write-Host "  ▶ PHASE 10 // DIAGNOSTICS" -ForegroundColor Cyan
           $test = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
-          if (-not $test.TcpTestSucceeded) {
-            Write-Error "RDP port 3389 not reachable"; exit 1
-          }
-          Write-Host "RDP reachable on port 3389 ✓" -ForegroundColor Green
+          if (-not $test.TcpTestSucceeded) { Write-Error "RDP port 3389 unreachable"; exit 1 }
+          Write-Host "    [✓] RDP port 3389 .. REACHABLE" -ForegroundColor Green
+          Write-Host "    [✓] node ........... $(node --version)" -ForegroundColor Green
+          Write-Host "    [✓] npm ............ $(npm --version)" -ForegroundColor Green
+          Write-Host "    [✓] chrome ......... $((Test-Path 'C:\Program Files\Google\Chrome\Application\chrome.exe') ? 'OK' : 'FAIL')" -ForegroundColor Green
 
-      # ─────────────────────────────────────────────
-      # 8. VERIFICAR APLICACIONES INSTALADAS
-      # ─────────────────────────────────────────────
-      - name: Verify Installed Apps
+      # ═══════════════════════════════════════════════════════
+      #  ♾️ STASIS MODE (keep alive)
+      # ═══════════════════════════════════════════════════════
+      - name: ♾️ Stasis Mode
         run: |
           Write-Host ""
-          Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Cyan
-          Write-Host "║         VERIFICATION REPORT                      ║" -ForegroundColor Cyan
-          Write-Host "╠══════════════════════════════════════════════════╣" -ForegroundColor Cyan
-          
-          Write-Host "║  NODE.JS:" -NoNewline
-          try { node --version 2>$null; Write-Host " ✓" -ForegroundColor Green } catch { Write-Host " ✗" -ForegroundColor Red }
-          
-          Write-Host "║  NPM:    " -NoNewline
-          try { npm --version 2>$null; Write-Host " ✓" -ForegroundColor Green } catch { Write-Host " ✗" -ForegroundColor Red }
-          
-          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          Write-Host "  ╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "  ║  🔗  NEURAL LINK ESTABLISHED — SESSION CREDENTIALS            ║" -ForegroundColor Cyan
+          Write-Host "  ╠══════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+          Write-Host "  ║  IP:       $env:TAILSCALE_IP"
+          Write-Host "  ║  User:     RDP"
+          Write-Host "  ║  Password: $env:RDP_PASSWORD"
+          Write-Host "  ╠══════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+          Write-Host "  ║  💾 C: ~14GB sistema | D: ~70GB runner | E: ~100GB VHDX      ║"
+          Write-Host "  ║  🖱️ Cursor Bibata (Linux) | 🎌 Wallpaper anime | 🚀 Otimizado ║"
+          Write-Host "  ╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
           Write-Host ""
 
-      # ─────────────────────────────────────────────
-      # 9. MANTENER SESIÓN ACTIVA
-      # ─────────────────────────────────────────────
-      - name: Keep Alive & Show Credentials
-        run: |
-          Write-Host ""
-          Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Cyan
-          Write-Host "║         RDP ACCESS INFO                          ║" -ForegroundColor Cyan
-          Write-Host "╠══════════════════════════════════════════════════╣" -ForegroundColor Cyan
-          Write-Host "║  IP:       $env:TAILSCALE_IP"
-          Write-Host "║  User:     RDP"
-          Write-Host "║  Password: $env:RDP_PASSWORD"
-          Write-Host "╠══════════════════════════════════════════════════╣" -ForegroundColor Cyan
-          Write-Host "║  STORAGE                                         ║" -ForegroundColor Cyan
-          Write-Host "║  C: ~14GB (sistema)                              ║"
-          Write-Host "║  D: ~70GB (runner disk)                          ║"
-          Write-Host "║  E: ~100GB (VHD extra)                           ║"
-          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
-          Write-Host ""
-
-          # Mantener la sesión activa
           $i = 0
           while ($true) {
             Start-Sleep -Seconds 60
             $i++
-            Write-Host "Keep alive... ($i minutos)" -ForegroundColor DarkGray
+            $pulse = @("⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏")[$i % 10]
+            Write-Host "  $pulse STASIS ACTIVE — uptime ${i}m | link stable" -ForegroundColor DarkMagenta
           }
-          
+

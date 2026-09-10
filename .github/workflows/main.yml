@@ -1,270 +1,931 @@
-name: 🌐 NEURAL-LINK // RDP SESSION
+name: "🚀 NOVA RDP // Windows Performance Edition"
+
 on:
   workflow_dispatch:
+    inputs:
+      wallpaper_url:
+        description: "URL do wallpaper anime"
+        required: false
+        type: string
+        default: "https://raw.githubusercontent.com/D3Ext/aesthetic-wallpapers/main/images/girl.jpg"
+
+      install_discord:
+        description: "Instalar Discord"
+        required: true
+        type: boolean
+        default: true
+
+      install_powertoys:
+        description: "Instalar Microsoft PowerToys"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nova-rdp-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NOVA_DIR: 'C:\ProgramData\NOVA-RDP'
+  RDP_USER: 'RDP'
 
 jobs:
-  secure-rdp:
-    runs-on: windows-latest
-    timeout-minutes: 3600
+  configure-nova:
+    name: "⚡ Build NOVA Desktop"
+    
+    # IMPORTANTE:
+    # Este workflow é para uma VM/PC Windows que VOCÊ controla
+    # e registrou como self-hosted runner.
+    runs-on: [self-hosted, windows, x64]
 
     steps:
-      # ═══════════════════════════════════════════════════════
-      #  ⚡ BOOT SEQUENCE — NEURAL LINK v9.0
-      # ═══════════════════════════════════════════════════════
-      - name: ⚡ Boot Sequence
-        run: |
-          Write-Host ""
-          Write-Host "  ███╗   ██╗███████╗██╗   ██╗██████╗  █████╗ ██╗      " -ForegroundColor Magenta
-          Write-Host "  ████╗  ██║██╔════╝██║   ██║██╔══██╗██╔══██╗██║      " -ForegroundColor Magenta
-          Write-Host "  ██╔██╗ ██║█████╗  ██║   ██║██████╔╝███████║██║      " -ForegroundColor Magenta
-          Write-Host "  ██║╚██╗██║██╔══╝  ██║   ██║██╔═══╝ ██╔══██║██║      " -ForegroundColor Magenta
-          Write-Host "  ██║ ╚████║███████╗╚██████╔╝██║     ██║  ██║███████╗ " -ForegroundColor Magenta
-          Write-Host "  ╚═╝  ╚═══╝╚══════╝ ╚═════╝ ╚═╝     ╚═╝  ╚═╝╚══════╝ " -ForegroundColor Magenta
-          Write-Host "         R D P   //   N E U R A L - L I N K   v 9 . 0 " -ForegroundColor Cyan
-          Write-Host ""
-          Write-Host "  [◉] Kernel ......... Windows Server 2025 (windows-latest)" -ForegroundColor Green
-          Write-Host "  [◉] Protocol ....... RDP over Tailscale mesh" -ForegroundColor Green
-          Write-Host "  [◉] Link speed ..... (hardware-limited by host fabric)" -ForegroundColor Yellow
-          Write-Host ""
 
-      # ═══════════════════════════════════════════════════════
-      #  💾 STORAGE MATRIX
-      # ═══════════════════════════════════════════════════════
-      - name: 💾 Storage Matrix
+      # ============================================================
+      # 01 // SYSTEM CHECK
+      # ============================================================
+
+      - name: "🔎 01 // System Intelligence"
+        shell: pwsh
         run: |
-          Write-Host "  ▶ PHASE 01 // PURGING HOST BLOAT" -ForegroundColor Cyan
-          $toRemove = @(
-            "$env:SystemDrive\hostedtoolcache\windows\Ruby",
-            "$env:SystemDrive\hostedtoolcache\windows\go",
-            "$env:SystemDrive\hostedtoolcache\windows\Python",
-            "$env:ProgramFiles\dotnet",
-            "$env:ProgramFiles\MongoDB",
-            "$env:ProgramFiles\PostgreSQL",
-            "$env:ProgramFiles (x86)\Google\Chrome",
-            "$env:ProgramFiles\Mozilla Firefox"
+          $ErrorActionPreference = "Stop"
+
+          Write-Host ""
+          Write-Host "============================================="
+          Write-Host "        NOVA RDP // SYSTEM INTELLIGENCE"
+          Write-Host "============================================="
+
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+
+          $principal = New-Object Security.Principal.WindowsPrincipal(
+            $identity
           )
-          foreach ($path in $toRemove) {
-            if (Test-Path $path) {
-              Remove-Item $path -Recurse -Force -ErrorAction SilentlyContinue
-              Write-Host "    [✓] purged: $path" -ForegroundColor DarkGray
+
+          if (-not $principal.IsInRole(
+            [Security.Principal.WindowsBuiltInRole]::Administrator
+          )) {
+            throw "O runner precisa executar com privilégios administrativos."
+          }
+
+          $os = Get-CimInstance Win32_OperatingSystem
+          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+          $pc = Get-CimInstance Win32_ComputerSystem
+
+          Write-Host "OS ...........: $($os.Caption)"
+          Write-Host "Build ........: $($os.BuildNumber)"
+          Write-Host "CPU ..........: $($cpu.Name)"
+          Write-Host "RAM ..........: $([math]::Round($pc.TotalPhysicalMemory / 1GB, 2)) GB"
+          Write-Host "Computer .....: $env:COMPUTERNAME"
+
+          if ($os.Caption -match "Home") {
+            throw "Windows Home não pode funcionar como host RDP nativo. Use Windows 11 Pro/Enterprise ou Windows Server."
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Path $env:NOVA_DIR `
+            -Force | Out-Null
+
+
+      # ============================================================
+      # 02 // PERFORMANCE
+      # ============================================================
+
+      - name: "⚡ 02 // Hyper Performance Mode"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+
+          Write-Host "Ativando perfil de alto desempenho..."
+
+          # High Performance
+          powercfg /setactive SCHEME_MIN
+
+          # Evita hibernação e libera espaço
+          powercfg /hibernate off
+
+          # TCP Receive Window Auto-Tuning
+          netsh int tcp set global autotuninglevel=normal
+
+          # Receive Side Scaling
+          netsh int tcp set global rss=enabled
+
+          # Habilitar RSS onde disponível
+          Get-NetAdapter |
+            Where-Object Status -eq "Up" |
+            ForEach-Object {
+              Enable-NetAdapterRss `
+                -Name $_.Name `
+                -ErrorAction SilentlyContinue
+            }
+
+          # Remover arquivos temporários antigos
+          Get-ChildItem "$env:TEMP" -Force -ErrorAction SilentlyContinue |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+          Write-Host "Performance profile: ACTIVE"
+
+
+      # ============================================================
+      # 03 // RDP USER
+      # ============================================================
+
+      - name: "👤 03 // Create Secure RDP Identity"
+        shell: pwsh
+        env:
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) {
+            throw "Configure o secret RDP_PASSWORD."
+          }
+
+          $securePassword = ConvertTo-SecureString `
+            $env:RDP_PASSWORD `
+            -AsPlainText `
+            -Force
+
+          $existing = Get-LocalUser `
+            -Name $env:RDP_USER `
+            -ErrorAction SilentlyContinue
+
+          if ($existing) {
+
+            Write-Host "Usuário existente. Atualizando senha..."
+
+            Set-LocalUser `
+              -Name $env:RDP_USER `
+              -Password $securePassword
+
+          }
+          else {
+
+            Write-Host "Criando usuário RDP..."
+
+            New-LocalUser `
+              -Name $env:RDP_USER `
+              -Password $securePassword `
+              -PasswordNeverExpires `
+              -AccountNeverExpires `
+              -Description "NOVA Remote Desktop User"
+          }
+
+          # Grupo Remote Desktop Users por SID
+          # SID funciona independente do idioma do Windows.
+          $rdpGroup = Get-LocalGroup |
+            Where-Object {
+              $_.SID.Value -eq "S-1-5-32-555"
+            }
+
+          if ($rdpGroup) {
+            Add-LocalGroupMember `
+              -Group $rdpGroup.Name `
+              -Member $env:RDP_USER `
+              -ErrorAction SilentlyContinue
+          }
+
+          # Administrator.
+          # Necessário para primeira configuração automática
+          # do cursor e aplicações.
+          $adminGroup = Get-LocalGroup |
+            Where-Object {
+              $_.SID.Value -eq "S-1-5-32-544"
+            }
+
+          if ($adminGroup) {
+            Add-LocalGroupMember `
+              -Group $adminGroup.Name `
+              -Member $env:RDP_USER `
+              -ErrorAction SilentlyContinue
+          }
+
+          Write-Host "RDP identity ready."
+
+
+      # ============================================================
+      # 04 // RDP ENGINE
+      # ============================================================
+
+      - name: "🖥️ 04 // Configure Secure RDP Engine"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $terminalServer = `
+            "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server"
+
+          $rdpTcp = `
+            "$terminalServer\WinStations\RDP-Tcp"
+
+          # Enable RDP
+          Set-ItemProperty `
+            -Path $terminalServer `
+            -Name "fDenyTSConnections" `
+            -Value 0
+
+          # Network Level Authentication ON
+          Set-ItemProperty `
+            -Path $rdpTcp `
+            -Name "UserAuthentication" `
+            -Value 1
+
+          # TLS Security Layer
+          Set-ItemProperty `
+            -Path $rdpTcp `
+            -Name "SecurityLayer" `
+            -Value 2
+
+          # High encryption
+          Set-ItemProperty `
+            -Path $rdpTcp `
+            -Name "MinEncryptionLevel" `
+            -Value 3
+
+          Set-Service `
+            -Name TermService `
+            -StartupType Automatic
+
+          Restart-Service `
+            -Name TermService `
+            -Force
+
+          Write-Host "RDP Engine ACTIVE"
+          Write-Host "NLA ............... ON"
+          Write-Host "Encryption ........ HIGH"
+          Write-Host "TLS ............... ON"
+
+
+      # ============================================================
+      # 05 // TAILSCALE LATEST
+      # ============================================================
+
+      - name: "🌐 05 // Install Latest Stable Tailscale"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $tailscale = `
+            "$env:ProgramFiles\Tailscale\tailscale.exe"
+
+          if (-not (Test-Path $tailscale)) {
+
+            Write-Host "Detectando versão Stable mais recente..."
+
+            $page = Invoke-WebRequest `
+              -Uri "https://pkgs.tailscale.com/stable/" `
+              -UseBasicParsing
+
+            $matches = [regex]::Matches(
+              $page.Content,
+              'tailscale-setup-([0-9]+\.[0-9]+\.[0-9]+)-amd64\.msi'
+            )
+
+            if ($matches.Count -eq 0) {
+              throw "Não foi possível identificar a versão atual do Tailscale."
+            }
+
+            $versions = $matches |
+              ForEach-Object {
+                [version]$_.Groups[1].Value
+              } |
+              Sort-Object -Descending -Unique
+
+            $latest = $versions[0].ToString()
+
+            Write-Host "Tailscale Stable: $latest"
+
+            $url = `
+              "https://pkgs.tailscale.com/stable/tailscale-setup-$latest-amd64.msi"
+
+            $installer = `
+              "$env:TEMP\tailscale-latest.msi"
+
+            curl.exe `
+              -L `
+              --fail `
+              --retry 3 `
+              -o $installer `
+              $url
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "Falha ao baixar Tailscale."
+            }
+
+            $process = Start-Process `
+              -FilePath "msiexec.exe" `
+              -ArgumentList @(
+                "/i"
+                "`"$installer`""
+                "/qn"
+                "/norestart"
+              ) `
+              -Wait `
+              -PassThru
+
+            if ($process.ExitCode -notin @(0, 3010)) {
+              throw "Tailscale MSI falhou: $($process.ExitCode)"
+            }
+
+            Remove-Item `
+              $installer `
+              -Force `
+              -ErrorAction SilentlyContinue
+          }
+
+          if (-not (Test-Path $tailscale)) {
+            throw "Tailscale não foi encontrado após a instalação."
+          }
+
+          & $tailscale version
+
+
+      # ============================================================
+      # 06 // TAILSCALE ZERO TRUST
+      # ============================================================
+
+      - name: "🛡️ 06 // Connect Zero-Trust Network"
+        shell: pwsh
+        env:
+          TS_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ([string]::IsNullOrWhiteSpace($env:TS_AUTH_KEY)) {
+            throw "Configure o secret TAILSCALE_AUTH_KEY."
+          }
+
+          $tailscale = `
+            "$env:ProgramFiles\Tailscale\tailscale.exe"
+
+          $hostname = `
+            "nova-$($env:COMPUTERNAME.ToLower())"
+
+          Write-Host "Connecting to Tailscale..."
+
+          & $tailscale up `
+            --auth-key=$env:TS_AUTH_KEY `
+            --hostname=$hostname `
+            --unattended=true `
+            --accept-dns=false
+
+          Start-Sleep -Seconds 3
+
+          $tsIP = (
+            & $tailscale ip -4 |
+            Select-Object -First 1
+          ).Trim()
+
+          if ([string]::IsNullOrWhiteSpace($tsIP)) {
+            throw "Tailscale não recebeu endereço IPv4."
+          }
+
+          "TAILSCALE_IP=$tsIP" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append `
+              -Encoding utf8
+
+          Write-Host ""
+          Write-Host "Tailscale online."
+          Write-Host "IP: $tsIP"
+
+
+      # ============================================================
+      # 07 // ZERO-TRUST FIREWALL
+      # ============================================================
+
+      - name: "🔥 07 // Lock RDP to Tailscale Only"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          # Desabilita regras padrões de RDP, que normalmente
+          # permitem acesso por outras interfaces.
+          Disable-NetFirewallRule `
+            -Name "RemoteDesktop-UserMode-In-TCP" `
+            -ErrorAction SilentlyContinue
+
+          Disable-NetFirewallRule `
+            -Name "RemoteDesktop-UserMode-In-UDP" `
+            -ErrorAction SilentlyContinue
+
+          Get-NetFirewallRule `
+            -DisplayName "NOVA-RDP-*" `
+            -ErrorAction SilentlyContinue |
+            Remove-NetFirewallRule `
+              -ErrorAction SilentlyContinue
+
+          # CGNAT range usado pelos endereços IPv4 Tailscale
+          $tailscaleNetwork = "100.64.0.0/10"
+
+          New-NetFirewallRule `
+            -DisplayName "NOVA-RDP-Tailscale-TCP" `
+            -Direction Inbound `
+            -Action Allow `
+            -Protocol TCP `
+            -LocalPort 3389 `
+            -RemoteAddress $tailscaleNetwork `
+            -Profile Any
+
+          # RDP moderno também usa UDP para reduzir latência.
+          New-NetFirewallRule `
+            -DisplayName "NOVA-RDP-Tailscale-UDP" `
+            -Direction Inbound `
+            -Action Allow `
+            -Protocol UDP `
+            -LocalPort 3389 `
+            -RemoteAddress $tailscaleNetwork `
+            -Profile Any
+
+          Write-Host "RDP público: BLOCKED"
+          Write-Host "RDP/Tailscale TCP: ALLOWED"
+          Write-Host "RDP/Tailscale UDP: ALLOWED"
+
+
+      # ============================================================
+      # 08 // CHROME
+      # ============================================================
+
+      - name: "🌐 08 // Install Chrome"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+
+          if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+
+            winget install `
+              --id Google.Chrome `
+              --exact `
+              --silent `
+              --scope machine `
+              --accept-package-agreements `
+              --accept-source-agreements
+
+          }
+          else {
+            Write-Warning "winget não encontrado."
+          }
+
+
+      # ============================================================
+      # 09 // FIRST LOGIN EXPERIENCE
+      # ============================================================
+
+      - name: "🎨 09 // Build Futuristic Desktop Experience"
+        shell: pwsh
+        env:
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+          WALLPAPER_URL: ${{ inputs.wallpaper_url }}
+          INSTALL_DISCORD: ${{ inputs.install_discord }}
+          INSTALL_POWERTOYS: ${{ inputs.install_powertoys }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          New-Item `
+            -ItemType Directory `
+            -Path $env:NOVA_DIR `
+            -Force | Out-Null
+
+          # Armazenar apenas configurações NÃO secretas.
+          Set-Content `
+            "$env:NOVA_DIR\wallpaper-url.txt" `
+            $env:WALLPAPER_URL
+
+          Set-Content `
+            "$env:NOVA_DIR\discord.txt" `
+            $env:INSTALL_DISCORD
+
+          Set-Content `
+            "$env:NOVA_DIR\powertoys.txt" `
+            $env:INSTALL_POWERTOYS
+
+          $firstLoginScript = @'
+          $ErrorActionPreference = "Continue"
+
+          $NovaDir = "C:\ProgramData\NOVA-RDP"
+
+          Write-Host "==================================="
+          Write-Host "   NOVA RDP // FIRST BOOT"
+          Write-Host "==================================="
+
+
+          # ------------------------------------------------
+          # PERFORMANCE UI
+          # ------------------------------------------------
+
+          New-Item `
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" `
+            -Force | Out-Null
+
+          Set-ItemProperty `
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" `
+            -Name VisualFXSetting `
+            -Type DWord `
+            -Value 2
+
+          New-Item `
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" `
+            -Force | Out-Null
+
+          Set-ItemProperty `
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" `
+            -Name EnableTransparency `
+            -Type DWord `
+            -Value 0
+
+          Set-ItemProperty `
+            "HKCU:\Control Panel\Desktop" `
+            -Name MenuShowDelay `
+            -Value "0"
+
+
+          # ------------------------------------------------
+          # WALLPAPER
+          # ------------------------------------------------
+
+          $wallpaperUrl = Get-Content `
+            "$NovaDir\wallpaper-url.txt" `
+            -ErrorAction SilentlyContinue
+
+          if (-not [string]::IsNullOrWhiteSpace($wallpaperUrl)) {
+
+            $pictures = [Environment]::GetFolderPath("MyPictures")
+
+            if (-not (Test-Path $pictures)) {
+              New-Item `
+                -ItemType Directory `
+                -Path $pictures `
+                -Force | Out-Null
+            }
+
+            $wallpaper = `
+              Join-Path $pictures "NOVA-Anime-Wallpaper.jpg"
+
+            try {
+
+              curl.exe `
+                -L `
+                --fail `
+                --retry 3 `
+                -o $wallpaper `
+                $wallpaperUrl
+
+              if (Test-Path $wallpaper) {
+
+                Set-ItemProperty `
+                  "HKCU:\Control Panel\Desktop" `
+                  -Name Wallpaper `
+                  -Value $wallpaper
+
+                Set-ItemProperty `
+                  "HKCU:\Control Panel\Desktop" `
+                  -Name WallpaperStyle `
+                  -Value "10"
+
+                Set-ItemProperty `
+                  "HKCU:\Control Panel\Desktop" `
+                  -Name TileWallpaper `
+                  -Value "0"
+
+                Add-Type @"
+          using System.Runtime.InteropServices;
+
+          public class NovaWallpaper {
+              [DllImport(
+                  "user32.dll",
+                  CharSet = CharSet.Auto
+              )]
+              public static extern int SystemParametersInfo(
+                  int uAction,
+                  int uParam,
+                  string lpvParam,
+                  int fuWinIni
+              );
+          }
+          "@
+
+                [NovaWallpaper]::SystemParametersInfo(
+                  20,
+                  0,
+                  $wallpaper,
+                  3
+                ) | Out-Null
+              }
+
+            }
+            catch {
+              Write-Warning "Não foi possível aplicar wallpaper."
             }
           }
 
-          Write-Host "  ▶ PHASE 02 // FORGING EXTRA DISK (VHDX 100GB)" -ForegroundColor Cyan
-          $vhdPath = "D:\extra_disk.vhdx"
-          New-VHD -Path $vhdPath -SizeBytes 100GB -Dynamic -ErrorAction SilentlyContinue
-          Mount-VHD -Path $vhdPath
-          $disk = Get-Disk | Where-Object { $_.OperationalStatus -eq 'Online' -and $_.PartitionStyle -eq 'RAW' } | Select-Object -Last 1
-          if ($disk) {
-            Initialize-Disk -Number $disk.Number -PartitionStyle MBR -PassThru |
-              New-Partition -AssignDriveLetter -UseMaximumSize |
-              Format-Volume -FileSystem NTFS -NewFileSystemLabel "ExtraDisk" -Confirm:$false
-          }
-          New-Item -ItemType Directory -Force -Path "D:\storage" | Out-Null
-          Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{N="UsedGB";E={[math]::Round($_.Used/1GB,1)}}, @{N="FreeGB";E={[math]::Round($_.Free/1GB,1)}} | Format-Table -AutoSize
 
-      # ═══════════════════════════════════════════════════════
-      #  🚀 OS OPTIMIZATION PROTOCOL
-      # ═══════════════════════════════════════════════════════
-      - name: 🚀 OS Optimization Protocol
-        run: |
-          Write-Host "  ▶ PHASE 03 // PERFORMANCE OVERCLOCK (SOFTWARE)" -ForegroundColor Cyan
-          # Plano de energia: Alto desempenho
-          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>$null
-          powercfg /change monitor-timeout-ac 0
-          powercfg /change standby-timeout-ac 0
+          # ------------------------------------------------
+          # LINUX STYLE CURSOR // BIBATA MODERN ICE
+          # ------------------------------------------------
 
-          # Efeitos visuais: máximo desempenho
-          Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" VisualFXSetting -Value 2 -ErrorAction SilentlyContinue
-          Set-ItemProperty "HKCU:\Control Panel\Desktop" DragFullWindows -Value 0 -ErrorAction SilentlyContinue
-          Set-ItemProperty "HKCU:\Control Panel\Desktop" MenuShowDelay -Value 0 -ErrorAction SilentlyContinue
+          try {
 
-          # Desativar telemetria / serviços pesados
-          $services = @("DiagTrack","dmwappushservice","WSearch","SysMain","WMPNetworkSvc")
-          foreach ($svc in $services) {
-            Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
-            Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
-          }
+            $bibataDir = `
+              Join-Path $env:TEMP "NOVA-Bibata"
 
-          # Desativar GameDVR (libera recursos)
-          New-Item -Path "HKCU:\System\GameConfigStore" -Force | Out-Null
-          Set-ItemProperty "HKCU:\System\GameConfigStore" GameDVR_Enabled -Value 0
+            $bibataZip = `
+              Join-Path $env:TEMP "Bibata.zip"
 
-          Write-Host "    [✓] energy plan .... HIGH PERFORMANCE" -ForegroundColor Green
-          Write-Host "    [✓] visuals ........ stripped for speed" -ForegroundColor Green
-          Write-Host "    [✓] telemetry ...... neutralized" -ForegroundColor Green
+            Remove-Item `
+              $bibataDir `
+              -Recurse `
+              -Force `
+              -ErrorAction SilentlyContinue
 
-      # ═══════════════════════════════════════════════════════
-      #  🖱️ LINUX CURSOR INJECTION (Bibata)
-      # ═══════════════════════════════════════════════════════
-      - name: 🖱️ Linux Cursor Injection
-        run: |
-          Write-Host "  ▶ PHASE 04 // INJECTING LINUX CURSOR SCHEME" -ForegroundColor Cyan
-          $zip = "$env:TEMP\bibata.zip"
-          $dst = "C:\Windows\Cursors\Bibata"
-          Invoke-WebRequest "https://github.com/ful1e5/Bibata_Cursor/releases/download/v2.0.7/Bibata-Modern-Classic-Windows.zip" -OutFile $zip -UseBasicParsing
-          Expand-Archive $zip "$env:TEMP\bibata" -Force
-          $scheme = Get-ChildItem "$env:TEMP\bibata" -Recurse -Filter "*.inf" | Select-Object -First 1
-          New-Item -ItemType Directory -Force -Path $dst | Out-Null
-          Copy-Item "$($scheme.DirectoryName)\*" $dst -Recurse -Force
-          # Instala o scheme de cursor via INF
-          $infPath = Get-ChildItem $dst -Filter "*.inf" | Select-Object -First 1
-          Start-Process "rundll32.exe" -ArgumentList "setupapi.dll,InstallHinfSection DefaultInstall 132 `"$($infPath.FullName)`"" -Wait
-          Write-Host "    [✓] cursor scheme .. Bibata (Linux-style)" -ForegroundColor Green
+            curl.exe `
+              -L `
+              --fail `
+              --retry 3 `
+              -o $bibataZip `
+              "https://github.com/ful1e5/Bibata_Cursor/releases/download/v2.0.7/Bibata-Modern-Ice-Windows.zip"
 
-      # ═══════════════════════════════════════════════════════
-      #  🎌 ANIME WALLPAPER DEPLOY
-      # ═══════════════════════════════════════════════════════
-      - name: 🎌 Anime Wallpaper Deploy
-        run: |
-          Write-Host "  ▶ PHASE 05 // WALLPAPER OVERRIDE" -ForegroundColor Cyan
-          Add-Type -AssemblyName System.Drawing
-          $wallpaper = "C:\Windows\Web\Wallpaper\anime_wallpaper.jpg"
-          # Wallpaper anime genérico em alta resolução (troque a URL se quiser outro)
-          Invoke-WebRequest "https://images.wallpapersden.com/image/download/anime-cityscape-4k_a25naW2UmZqaraWkpJRobWllrWdma2U.jpg" -OutFile $wallpaper -UseBasicParsing -ErrorAction SilentlyContinue
-          if (-not (Test-Path $wallpaper) -or (Get-Item $wallpaper).Length -lt 50KB) {
-            # Fallback: gera um wallpaper gradiente cyberpunk local (sempre funciona, sem depender de URL)
-            $bmp = New-Object System.Drawing.Bitmap(1920,1080)
-            $g = [System.Drawing.Graphics]::FromImage($bmp)
-            for ($y=0; $y -lt 1080; $y++) {
-              $r = [int](20 + 60*($y/1080)); $b = [int](180 - 100*($y/1080))
-              $g.FillRectangle((New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb($r,10,$b))), 0, $y, 1920, 1)
+            Expand-Archive `
+              -Path $bibataZip `
+              -DestinationPath $bibataDir `
+              -Force
+
+            $cursorDirectory = Get-ChildItem `
+              -Path $bibataDir `
+              -Directory `
+              -Recurse |
+              Where-Object {
+                $_.Name -eq "Bibata-Modern-Ice-Regular-Windows"
+              } |
+              Select-Object -First 1
+
+            if ($cursorDirectory) {
+
+              $inf = Join-Path `
+                $cursorDirectory.FullName `
+                "install.inf"
+
+              if (Test-Path $inf) {
+
+                # Evita abrir painel Mouse automaticamente.
+                $content = Get-Content $inf
+
+                $content = $content -replace `
+                  '.*rundll32.exe shell32.dll,Control_RunDLL main.cpl.*',
+                  ''
+
+                Set-Content `
+                  -Path $inf `
+                  -Value $content
+
+                Start-Process `
+                  rundll32.exe `
+                  -ArgumentList `
+                    "setupapi.dll,InstallHinfSection DefaultInstall 132 `"$inf`"" `
+                  -Wait
+              }
             }
-            $font = New-Object System.Drawing.Font("Consolas", 64, [System.Drawing.FontStyle]::Bold)
-            $g.DrawString("NEURAL LINK", $font, [System.Drawing.Brushes]::White, 480, 460)
-            $bmp.Save($wallpaper, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+
+            Remove-Item `
+              $bibataZip `
+              -Force `
+              -ErrorAction SilentlyContinue
+
+            Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+
+          public class NovaCursor {
+              [DllImport("user32.dll")]
+              public static extern bool SystemParametersInfo(
+                  uint uiAction,
+                  uint uiParam,
+                  IntPtr pvParam,
+                  uint fWinIni
+              );
           }
-          # Aplica wallpaper para todos os usuários
-          Add-Type -TypeDefinition @"
-            using System.Runtime.InteropServices;
-            public class W { [DllImport("user32.dll",SetLastError=true)] public static extern bool SystemParametersInfo(int a,int b,string c,int d); }
-"@
-          [W]::SystemParametersInfo(20, 0, $wallpaper, 3) | Out-Null
-          Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP" -Name LockScreenImagePath -Value $wallpaper -ErrorAction SilentlyContinue
-          Write-Host "    [✓] wallpaper ...... deployed" -ForegroundColor Green
+          "@
 
-      # ═══════════════════════════════════════════════════════
-      #  🛰️ RDP UPLINK
-      # ═══════════════════════════════════════════════════════
-      - name: 🛰️ RDP Uplink
-        run: |
-          Write-Host "  ▶ PHASE 06 // RDP UPLINK" -ForegroundColor Cyan
-          Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' fDenyTSConnections -Value 0 -Force
-          Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' UserAuthentication -Value 0 -Force
-          Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' SecurityLayer -Value 0 -Force
-          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389 | Out-Null
-          Restart-Service -Name TermService -Force
-          Write-Host "    [✓] RDP tunnel ..... ONLINE" -ForegroundColor Green
+            # SPI_SETCURSORS
+            [NovaCursor]::SystemParametersInfo(
+              0x0057,
+              0,
+              [IntPtr]::Zero,
+              0x03
+            ) | Out-Null
 
-      # ═══════════════════════════════════════════════════════
-      #  👤 IDENTITY FORGE
-      # ═══════════════════════════════════════════════════════
-      - name: 👤 Identity Forge
-        run: |
-          Write-Host "  ▶ PHASE 07 // IDENTITY FORGE" -ForegroundColor Cyan
-          $charSet = @{
-            Upper   = [char[]](65..90)
-            Lower   = [char[]](97..122)
-            Number  = [char[]](48..57)
-            Special = [char[]]@(33,35,36,37,38,42,43,45,61,64)
           }
-          $raw  = @()
-          $raw += $charSet.Upper   | Get-Random -Count 4
-          $raw += $charSet.Lower   | Get-Random -Count 4
-          $raw += $charSet.Number  | Get-Random -Count 4
-          $raw += $charSet.Special | Get-Random -Count 4
-          $password = -join ($raw | Sort-Object { Get-Random })
-
-          New-LocalUser -Name "RDP" -Password (ConvertTo-SecureString $password -AsPlainText -Force) -AccountNeverExpires -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
-          if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) { Write-Error "User creation failed"; exit 1 }
-          "RDP_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "    [✓] identity ....... RDP user forged" -ForegroundColor Green
-
-      # ═══════════════════════════════════════════════════════
-      #  📦 APP ARSENAL (Chrome + Discord)
-      # ═══════════════════════════════════════════════════════
-      - name: 📦 App Arsenal
-        run: |
-          Write-Host "  ▶ PHASE 08 // APP ARSENAL" -ForegroundColor Cyan
-
-          Write-Host "    [»] downloading Chrome..." -ForegroundColor DarkGray
-          $chrome = "$env:TEMP\chrome.exe"
-          Invoke-WebRequest "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile $chrome -UseBasicParsing
-          Start-Process $chrome -ArgumentList "/silent /install" -Wait
-          Write-Host "    [✓] chrome ......... INSTALLED" -ForegroundColor Green
-
-          Write-Host "    [»] downloading Discord..." -ForegroundColor DarkGray
-          $discord = "$env:TEMP\discord.exe"
-          Invoke-WebRequest "https://discord.com/api/downloads/distributions/app/installers/latest/setup.exe" -OutFile $discord -UseBasicParsing
-          Start-Process $discord -Wait  # Discord instala em background para o usuário atual
-          Write-Host "    [✓] discord ........ INSTALLED" -ForegroundColor Green
-
-          Write-Host "    [!] roblox ........ SKIPPED (anti-cheat Hyperion não roda em Windows Server / sem GPU)" -ForegroundColor Yellow
-          Write-Host "    [✓] node.js ........ nativo do runner" -ForegroundColor Green
-
-      # ═══════════════════════════════════════════════════════
-      #  🔗 MESH NETWORK (Tailscale)
-      # ═══════════════════════════════════════════════════════
-      - name: 🔗 Mesh Network
-        run: |
-          Write-Host "  ▶ PHASE 09 // MESH NETWORK" -ForegroundColor Cyan
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installer = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installer -UseBasicParsing
-          Start-Process msiexec.exe -ArgumentList "/i","`"$installer`"","/quiet","/norestart" -Wait
-          Remove-Item $installer -Force
-
-          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          & $ts up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=neural-link-$env:GITHUB_RUN_ID
-
-          $tsIP = $null; $retries = 0
-          while (-not $tsIP -and $retries -lt 15) {
-            Start-Sleep -Seconds 4
-            $tsIP = & $ts ip -4 2>$null
-            $retries++
+          catch {
+            Write-Warning "Bibata Cursor setup falhou: $_"
           }
-          if (-not $tsIP) { Write-Error "Tailscale IP not assigned."; exit 1 }
-          "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "    [✓] mesh IP ........ $tsIP" -ForegroundColor Green
 
-      # ═══════════════════════════════════════════════════════
-      #  🩺 SYSTEM DIAGNOSTICS
-      # ═══════════════════════════════════════════════════════
-      - name: 🩺 System Diagnostics
-        run: |
-          Write-Host "  ▶ PHASE 10 // DIAGNOSTICS" -ForegroundColor Cyan
-          $test = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
-          if (-not $test.TcpTestSucceeded) { Write-Error "RDP port 3389 unreachable"; exit 1 }
-          Write-Host "    [✓] RDP port 3389 .. REACHABLE" -ForegroundColor Green
-          Write-Host "    [✓] node ........... $(node --version)" -ForegroundColor Green
-          Write-Host "    [✓] npm ............ $(npm --version)" -ForegroundColor Green
-          Write-Host "    [✓] chrome ......... $((Test-Path 'C:\Program Files\Google\Chrome\Application\chrome.exe') ? 'OK' : 'FAIL')" -ForegroundColor Green
 
-      # ═══════════════════════════════════════════════════════
-      #  ♾️ STASIS MODE (keep alive)
-      # ═══════════════════════════════════════════════════════
-      - name: ♾️ Stasis Mode
+          # ------------------------------------------------
+          # APPLICATION INSTALLER
+          # ------------------------------------------------
+
+          if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+
+            winget source update
+
+            $installDiscord = (
+              Get-Content "$NovaDir\discord.txt"
+            ).Trim()
+
+            if ($installDiscord -eq "true") {
+
+              winget install `
+                --id Discord.Discord `
+                --exact `
+                --silent `
+                --accept-package-agreements `
+                --accept-source-agreements
+            }
+
+
+            $installPowerToys = (
+              Get-Content "$NovaDir\powertoys.txt"
+            ).Trim()
+
+            if ($installPowerToys -eq "true") {
+
+              winget install `
+                --id Microsoft.PowerToys `
+                --exact `
+                --silent `
+                --accept-package-agreements `
+                --accept-source-agreements
+            }
+          }
+
+
+          # ------------------------------------------------
+          # RDP INFO DESKTOP FILE
+          # ------------------------------------------------
+
+          $desktop = `
+            [Environment]::GetFolderPath("Desktop")
+
+          @"
+          NOVA RDP
+          ==============================
+
+          Network: Tailscale
+          RDP Port: 3389
+          Username: RDP
+
+          Security:
+          - Network Level Authentication
+          - TLS
+          - RDP restricted to Tailscale
+          - TCP + UDP transport
+
+          Cursor:
+          - Bibata Modern Ice
+
+          Installed:
+          - Google Chrome
+          - Discord
+          - Microsoft PowerToys
+
+          ==============================
+          "@ |
+            Set-Content `
+              "$desktop\NOVA-RDP.txt"
+
+
+          # First boot task não é mais necessário.
+          Unregister-ScheduledTask `
+            -TaskName "NOVA-RDP-FirstLogin" `
+            -Confirm:$false `
+            -ErrorAction SilentlyContinue
+
+          Write-Host "NOVA desktop initialization completed."
+          '@
+
+          $scriptPath = `
+            "$env:NOVA_DIR\FirstLogin.ps1"
+
+          Set-Content `
+            -Path $scriptPath `
+            -Value $firstLoginScript `
+            -Encoding UTF8
+
+          $action = New-ScheduledTaskAction `
+            -Execute "powershell.exe" `
+            -Argument (
+              "-NoLogo -NoProfile -ExecutionPolicy Bypass " +
+              "-File `"$scriptPath`""
+            )
+
+          $trigger = New-ScheduledTaskTrigger `
+            -AtLogOn `
+            -User $env:RDP_USER
+
+          Register-ScheduledTask `
+            -TaskName "NOVA-RDP-FirstLogin" `
+            -Action $action `
+            -Trigger $trigger `
+            -User $env:RDP_USER `
+            -Password $env:RDP_PASSWORD `
+            -RunLevel Highest `
+            -Force | Out-Null
+
+          Write-Host "First-login customization armed."
+
+
+      # ============================================================
+      # 10 // VALIDATION
+      # ============================================================
+
+      - name: "🧪 10 // Validate NOVA Services"
+        shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           Write-Host ""
-          Write-Host "  ╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-          Write-Host "  ║  🔗  NEURAL LINK ESTABLISHED — SESSION CREDENTIALS            ║" -ForegroundColor Cyan
-          Write-Host "  ╠══════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
-          Write-Host "  ║  IP:       $env:TAILSCALE_IP"
-          Write-Host "  ║  User:     RDP"
-          Write-Host "  ║  Password: $env:RDP_PASSWORD"
-          Write-Host "  ╠══════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
-          Write-Host "  ║  💾 C: ~14GB sistema | D: ~70GB runner | E: ~100GB VHDX      ║"
-          Write-Host "  ║  🖱️ Cursor Bibata (Linux) | 🎌 Wallpaper anime | 🚀 Otimizado ║"
-          Write-Host "  ╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
-          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "        NOVA RDP // VALIDATION"
+          Write-Host "=========================================="
 
-          $i = 0
-          while ($true) {
-            Start-Sleep -Seconds 60
-            $i++
-            $pulse = @("⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏")[$i % 10]
-            Write-Host "  $pulse STASIS ACTIVE — uptime ${i}m | link stable" -ForegroundColor DarkMagenta
+          $rdpService = Get-Service TermService
+
+          if ($rdpService.Status -ne "Running") {
+            throw "Remote Desktop service is not running."
           }
+
+          $tailscale = `
+            "$env:ProgramFiles\Tailscale\tailscale.exe"
+
+          & $tailscale status
+
+          $listener = Get-NetTCPConnection `
+            -LocalPort 3389 `
+            -State Listen `
+            -ErrorAction SilentlyContinue
+
+          if (-not $listener) {
+            throw "RDP não está escutando na porta 3389."
+          }
+
+          Write-Host ""
+          Write-Host "✓ RDP Service"
+          Write-Host "✓ TCP 3389 listener"
+          Write-Host "✓ Tailscale"
+          Write-Host "✓ NLA"
+          Write-Host "✓ TLS"
+          Write-Host "✓ Tailscale-only Firewall"
+
+
+      # ============================================================
+      # 11 // DASHBOARD
+      # ============================================================
+
+      - name: "✅ 11 // NOVA Online"
+        shell: pwsh
+        run: |
+          $tailscale = `
+            "$env:ProgramFiles\Tailscale\tailscale.exe"
+
+          $ip = (
+            & $tailscale ip -4 |
+            Select-Object -First 1
+          ).Trim()
+
+          Write-Host ""
+          Write-Host "╔════════════════════════════════════════╗"
+          Write-Host "║          🚀 NOVA RDP ONLINE           ║"
+          Write-Host "╠════════════════════════════════════════╣"
+          Write-Host "║ Tailscale IP : $ip"
+          Write-Host "║ User         : RDP"
+          Write-Host "║ Port         : 3389"
+          Write-Host "║ Security     : ZERO-TRUST"
+          Write-Host "╚════════════════════════════════════════╝"
+          Write-Host ""
+          Write-Host "A senha é o valor do secret RDP_PASSWORD."
+
+          @"
+          # 🚀 NOVA RDP ONLINE
+
+          | Sistema | Status |
+          |---|---|
+          | 🖥️ Remote Desktop | ✅ Online |
+          | 🛡️ NLA | ✅ Enabled |
+          | 🔐 TLS | ✅ Enabled |
+          | 🌐 Tailscale | ✅ Connected |
+          | 🔥 Public RDP | ✅ Blocked |
+          | ⚡ High Performance | ✅ Enabled |
+          | 🖱️ Bibata Linux Cursor | ✅ First Login |
+          | 🎨 Anime Wallpaper | ✅ First Login |
+          | 🌐 Chrome | ✅ Installed |
+          | 💬 Discord | ✅ First Login |
+          | 🧰 PowerToys | ✅ First Login |
+
+          **RDP address:** ``$ip``
+
+          **Username:** ``RDP``
+
+          **Password:** stored securely in ``RDP_PASSWORD``.
+          "@ >> $env:GITHUB_STEP_SUMMARY

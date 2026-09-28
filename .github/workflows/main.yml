@@ -1,87 +1,216 @@
-name: RDP
+name: RDP Windows 2025 + Tailscale (GitHub Fast Network)
 
 on:
   workflow_dispatch:
 
 jobs:
   secure-rdp:
+    # Current standard GitHub-hosted Windows runner.
+    # windows-2025 is Windows Server 2025.
     runs-on: windows-2025
-    timeout-minutes: 3600
+    timeout-minutes: 360
 
     steps:
-      - name: Configure RDP
-        shell: powershell
+      - name: Configure secure RDP
+        shell: pwsh
         run: |
-          # Habilita Remote Desktop
           Set-ItemProperty `
             -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-            -Name 'fDenyTSConnections' `
-            -Value 0 `
-            -Force
+            -Name "fDenyTSConnections" -Value 0 -Force
 
-          # Mantém Network Level Authentication (NLA) habilitado
+          # Keep Network Level Authentication enabled.
           Set-ItemProperty `
             -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-            -Name 'UserAuthentication' `
-            -Value 1 `
-            -Force
+            -Name "UserAuthentication" -Value 1 -Force
 
-          # TLS para RDP
+          # Use the normal secure RDP security layer.
           Set-ItemProperty `
             -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-            -Name 'SecurityLayer' `
-            -Value 1 `
-            -Force
+            -Name "SecurityLayer" -Value 2 -Force
 
-          # Regra do Firewall do Windows
-          Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
+          # Enable the built-in Remote Desktop firewall rules.
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-          Restart-Service TermService -Force
+          Restart-Service -Name TermService -Force
 
-      - name: Create RDP User
-        shell: powershell
+      - name: Create RDP user
+        shell: pwsh
         run: |
-          $password = -join (
-            ((48..57) + (65..90) + (97..122)) |
-            Get-Random -Count 24 |
-            ForEach-Object { [char]$_ }
-          )
+          Add-Type -AssemblyName System.Security
 
-          $securePassword = ConvertTo-SecureString `
-            $password `
-            -AsPlainText `
-            -Force
-
-          if (Get-LocalUser -Name 'RDP' -ErrorAction SilentlyContinue) {
-            Set-LocalUser -Name 'RDP' -Password $securePassword
-          }
-          else {
-            New-LocalUser `
-              -Name 'RDP' `
-              -Password $securePassword `
-              -AccountNeverExpires
+          $charSet = @{
+            Upper   = [char[]](65..90)
+            Lower   = [char[]](97..122)
+            Number  = [char[]](48..57)
+            Special = ([char[]](33..47) + [char[]](58..64) +
+                       [char[]](91..96) + [char[]](123..126))
           }
 
-          Add-LocalGroupMember `
-            -Group 'Remote Desktop Users' `
-            -Member 'RDP' `
-            -ErrorAction SilentlyContinue
+          $rawPassword = @()
+          $rawPassword += $charSet.Upper   | Get-Random -Count 4
+          $rawPassword += $charSet.Lower   | Get-Random -Count 4
+          $rawPassword += $charSet.Number  | Get-Random -Count 4
+          $rawPassword += $charSet.Special | Get-Random -Count 4
 
-          "RDP_USERNAME=RDP" >> $env:GITHUB_ENV
-          "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+          $password = -join ($rawPassword | Sort-Object { Get-Random })
+          Write-Output "::add-mask::$password"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
 
-      - name: Show RDP information
-        shell: powershell
+          if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) {
+            Remove-LocalUser -Name "RDP"
+          }
+
+          New-LocalUser `
+            -Name "RDP" `
+            -Password $securePass `
+            -AccountNeverExpires `
+            -PasswordNeverExpires
+
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+
+          "RDP_USERNAME=RDP" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "RDP_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install Tailscale
+        shell: pwsh
         run: |
-          Write-Host "===== RDP ====="
-          Write-Host "Username: $env:RDP_USERNAME"
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.102.4-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+
+          Start-Process msiexec.exe `
+            -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" `
+            -Wait
+
+          Remove-Item $installerPath -Force
+
+          $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          if (-not (Test-Path $tsExe)) {
+            Write-Error "Tailscale installation failed."
+            exit 1
+          }
+
+      - name: Connect Tailscale
+        shell: pwsh
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAILSCALE_AUTH_KEY)) {
+            Write-Error "Missing GitHub Secret: TAILSCALE_AUTH_KEY"
+            exit 1
+          }
+
+          $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+
+          & $tsExe up `
+            --authkey="$env:TAILSCALE_AUTH_KEY" `
+            --hostname="gh-rdp-$env:GITHUB_RUN_ID" `
+            --accept-dns=true
+
+          $tsIP = $null
+
+          for ($i = 1; $i -le 20; $i++) {
+            $tsIP = (& $tsExe ip -4 | Select-Object -First 1).Trim()
+
+            if ($tsIP -match '^100\.') {
+              break
+            }
+
+            Start-Sleep -Seconds 3
+          }
+
+          if ($tsIP -notmatch '^100\.') {
+            Write-Error "Tailscale IPv4 address was not assigned."
+            & $tsExe status
+            exit 1
+          }
+
+          "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Allow RDP through Tailscale interface
+        shell: pwsh
+        run: |
+          # Permit RDP only from the Tailscale CGNAT address range.
+          # This avoids opening RDP to arbitrary public Internet sources.
+          Get-NetFirewallRule -DisplayGroup "Remote Desktop" |
+            Get-NetFirewallAddressFilter |
+            ForEach-Object {
+              $_ | Set-NetFirewallAddressFilter `
+                -RemoteAddress "100.64.0.0/10"
+            }
+
+          # Keep Windows' RDP service listening on the normal port.
+          $test = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+
+          if (-not $test.TcpTestSucceeded) {
+            Write-Error "RDP on Tailscale interface is not reachable."
+            exit 1
+          }
+
+      - name: Benchmark GitHub network connection
+        shell: pwsh
+        run: |
+          Write-Host "=== Runner information ==="
+          Write-Host "OS: $([System.Environment]::OSVersion.VersionString)"
+          Write-Host "Runner: $env:RUNNER_NAME"
+          Write-Host "Region is assigned by GitHub; workflow cannot choose it."
+
+          Write-Host "`n=== Public egress IP ==="
+          try {
+            $egress = (Invoke-RestMethod "https://api.ipify.org?format=text").Trim()
+            Write-Host $egress
+          } catch {
+            Write-Warning "Could not determine public egress IP."
+          }
+
+          Write-Host "`n=== GitHub connectivity ==="
+          $gh = Test-NetConnection github.com -Port 443
+          $gh | Select-Object ComputerName, RemoteAddress, RemotePort, TcpTestSucceeded
+
+          Write-Host "`n=== GitHub download test ==="
+          $url = "https://raw.githubusercontent.com/actions/runner-images/main/README.md"
+          $tmp = Join-Path $env:TEMP "github-test.bin"
+          $start = Get-Date
+
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
+            $seconds = ((Get-Date) - $start).TotalSeconds
+            $bytes = (Get-Item $tmp).Length
+
+            if ($seconds -gt 0) {
+              $mbps = ($bytes * 8 / 1MB) / $seconds
+              Write-Host ("GitHub raw transfer: {0:N2} Mbps ({1:N2} MB/s)" -f $mbps, ($mbps / 8))
+            }
+          } catch {
+            Write-Warning "GitHub download benchmark failed: $($_.Exception.Message)"
+          }
+
+      - name: Verify Tailscale and RDP
+        shell: pwsh
+        run: |
+          $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+
+          Write-Host ""
+          Write-Host "=============================================="
+          Write-Host "RDP ACCESS"
+          Write-Host "Address : $env:TAILSCALE_IP"
+          Write-Host "Port    : 3389"
+          Write-Host "User    : $env:RDP_USERNAME"
           Write-Host "Password: $env:RDP_PASSWORD"
-          Write-Host "==============="
+          Write-Host "OS      : Windows Server 2025"
+          Write-Host "Network : GitHub-hosted Windows runner"
+          Write-Host "Tailscale: connected"
+          Write-Host "=============================================="
+          Write-Host ""
 
-      - name: Keep runner alive
-        shell: powershell
+          & $tsExe status
+
+      - name: Keep RDP alive
+        shell: pwsh
         run: |
           while ($true) {
-            Write-Host "RDP runner ativo: $(Get-Date)"
+            Write-Host "[$(Get-Date)] RDP active - Tailscale IP: $env:TAILSCALE_IP"
             Start-Sleep -Seconds 300
           }

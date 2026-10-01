@@ -1,32 +1,52 @@
-name: win 11 + tailscale + Download.bat script 
+name: win 11 + tailscale + Download.bat script + AI Monitoring
 
 on:
   workflow_dispatch:
 
 jobs:
   secure-rdp:
+    # Tentar Windows 2025, se não disponível, usar 2022
     runs-on: windows-2022
     timeout-minutes: 350
 
     steps:
+      - name: Optimize Windows Performance
+        run: |
+          # Otimizações para Windows Server 2022/2025
+          # Desativar serviços desnecessários
+          $services = @(
+            "DiagTrack", "dmwappushservice", "MapsBroker", 
+            "XblAuthManager", "XblGameSave", "XboxNetApiSvc"
+          )
+          foreach ($service in $services) {
+            Set-Service -Name $service -StartupType Disabled
+          }
+
+          # Configurações de rede otimizadas
+          netsh int tcp set global autotuninglevel=normal
+          netsh int tcp set global congestionprovider=ctcp
+          netsh int tcp set global ecncapability=enabled
+          netsh int tcp set global rss=enabled
+
+          # Configurações de energia para performance
+          powercfg /setactive SCHEME_MIN
+
       - name: Configure Core RDP Settings
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          # Configuração RDP otimizada
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
                              -Name "fDenyTSConnections" -Value 0 -Force
+          
+          # Configurar NLA (mais seguro que desabilitar)
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "SecurityLayer" -Value 0 -Force
-
-          # Remove any existing rule with the same name to avoid duplication
+                             -Name "UserAuthentication" -Value 1 -Force
+          
+          # Configurar firewall
           netsh advfirewall firewall delete rule name="RDP-Tailscale"
-         
-          # For testing, allow any incoming connection on port 3389
           netsh advfirewall firewall add rule name="RDP-Tailscale" `
             dir=in action=allow protocol=TCP localport=3389
-
-          # (Optional) Restart the Remote Desktop service to ensure changes take effect
+          
+          # Reiniciar serviço RDP
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User with Fixed Password
@@ -38,15 +58,10 @@ jobs:
           }
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
-         
+          
           echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
-         
-          if (-not (Get-LocalUser -Name "RDP")) {
-              Write-Error "User creation failed"
-              exit 1
-          }
 
-      - name: Install Tailscale
+      - name: Install Tailscale (MÉTODO ORIGINAL)
         run: |
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
@@ -55,37 +70,209 @@ jobs:
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
 
-      - name: Establish Tailscale Connection
+      - name: Establish Tailscale Connection (MÉTODO ORIGINAL)
         run: |
-          # Bring up Tailscale with the provided auth key and set a unique hostname
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTHKEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
          
-          # Wait for Tailscale to assign an IP
+          # Aguardar IP com timeout maior
           $tsIP = $null
           $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
+          $maxRetries = 20
+          while (-not $tsIP -and $retries -lt $maxRetries) {
               $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
               Start-Sleep -Seconds 5
               $retries++
+              Write-Host "Tentativa $retries de $maxRetries"
           }
          
           if (-not $tsIP) {
-              Write-Error "Tailscale IP not assigned. Exiting."
+              Write-Error "Tailscale IP não atribuído após $maxRetries tentativas"
               exit 1
           }
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-     
+
       - name: Verify RDP Accessibility
         run: |
           Write-Host "Tailscale IP: $env:TAILSCALE_IP"
          
-          # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
           $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
           if (-not $testResult.TcpTestSucceeded) {
-              Write-Error "TCP connection to RDP port 3389 failed"
-              exit 1
+              # Tentar reiniciar serviço RDP se falhar
+              Restart-Service -Name TermService -Force
+              Start-Sleep -Seconds 10
+              $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+              
+              if (-not $testResult.TcpTestSucceeded) {
+                  Write-Error "Falha na conexão TCP após reinício do serviço"
+                  exit 1
+              }
           }
-          Write-Host "TCP connectivity successful!"
+          Write-Host "✅ Conectividade TCP estabelecida!"
+
+      - name: Advanced AI Monitoring System
+        run: |
+          # Sistema de monitoramento com IA (NVIDIA NIM)
+          $apiKey = "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"
+          
+          # Função para análise inteligente
+          function Invoke-AIAnalysis {
+              param($metrics, $apiKey)
+              
+              # Preparar payload para IA
+              $payload = @{
+                  model = "meta/llama-3.1-405b-instruct"
+                  messages = @(
+                      @{
+                          role = "system"
+                          content = "You are a Windows Server monitoring expert. Analyze the RDP metrics and provide diagnosis and recommendations. Format your response as JSON with fields: status, issue, solution, severity."
+                      },
+                      @{
+                          role = "user"
+                          content = "Metrics: $($metrics | ConvertTo-Json -Compress)"
+                      }
+                  )
+                  temperature = 0.7
+                  max_tokens = 256
+              }
+              
+              $headers = @{
+                  "Authorization" = "Bearer $apiKey"
+                  "Content-Type" = "application/json"
+              }
+              
+              try {
+                  $nimResponse = Invoke-RestMethod -Uri "https://integrate.api.nvidia.com/v1/chat/completions" `
+                    -Method Post -Headers $headers -Body ($payload | ConvertTo-Json -Depth 5)
+                  
+                  $analysisText = $nimResponse.choices[0].message.content
+                  # Tentar converter para JSON
+                  try {
+                      $analysis = $analysisText | ConvertFrom-Json
+                      return $analysis
+                  } catch {
+                      # Fallback se não for JSON válido
+                      return @{
+                          status = "unknown"
+                          issue = $analysisText
+                          solution = "Manual intervention required"
+                          severity = "medium"
+                      }
+                  }
+              }
+              catch {
+                  Write-Host "Erro ao chamar API NVIDIA NIM: $($_.Exception.Message)"
+                  return @{
+                      status = "error"
+                      issue = "API call failed"
+                      solution = "Check API key and network"
+                      severity = "high"
+                  }
+              }
+          }
+          
+          # Função de recuperação automática
+          function Invoke-AutoRecovery {
+              param($issue, $tailscaleIP)
+              
+              Write-Host "🔄 Iniciando recuperação automática para: $issue"
+              
+              switch ($issue) {
+                  "RDP Service Down" {
+                      # Reiniciar serviço RDP
+                      Restart-Service -Name TermService -Force
+                      Start-Sleep -Seconds 15
+                  }
+                  "Tailscale Connection Lost" {
+                      # Reiniciar Tailscale
+                      & "$env:ProgramFiles\Tailscale\tailscale.exe" down
+                      Start-Sleep -Seconds 10
+                      & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTHKEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+                      Start-Sleep -Seconds 30
+                  }
+                  "Network Connectivity Issue" {
+                      # Reiniciar adaptador de rede
+                      Restart-NetAdapter -Name "*" -ErrorAction SilentlyContinue
+                      Start-Sleep -Seconds 20
+                  }
+                  "High CPU Usage" {
+                      # Identificar processo com alto CPU
+                      $topProcess = Get-Process | Sort-Object CPU -Descending | Select-Object -First 1
+                      Write-Host "Processo com maior uso: $($topProcess.ProcessName) ($($topProcess.CPU)%)"
+                      
+                      # Não matar automaticamente, apenas notificar
+                      # Stop-Process -Id $topProcess.Id -Force -ErrorAction SilentlyContinue
+                  }
+                  default {
+                      Write-Host "⚠️ Ação de recuperação não definida para: $issue"
+                  }
+              }
+          }
+          
+          # Loop de monitoramento principal
+          $iteration = 0
+          $maxIterations = 100  # Evitar loop infinito
+          
+          while ($iteration -lt $maxIterations) {
+              $iteration++
+              $startTime = Get-Date
+              
+              # Coletar métricas do sistema
+              $rdpService = Get-Service -Name TermService
+              $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389 -WarningAction SilentlyContinue
+              
+              # Métricas detalhadas
+              $metrics = @{
+                  RDPServiceStatus = $rdpService.Status.ToString()
+                  RDPServiceStartType = $rdpService.StartType.ToString()
+                  TCPConnectivity = $testResult.TcpTestSucceeded
+                  PingTest = $testResult.PingSucceeded
+                  Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                  SystemUptime = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+                  MemoryUsage = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory/1MB, 2)
+                  CPUUsage = [math]::Round((Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average, 2)
+                  DiskUsage = [math]::Round((Get-PSDrive C).Free/1GB, 2)
+                  NetworkLatency = if ($testResult.PingSucceeded) { $testResult.ResponseTime } else { $null }
+                  Iteration = $iteration
+              }
+              
+              # Exibir métricas
+              Write-Host "`n📊 Métricas Coletadas (Iteração $iteration):"
+              Write-Host ($metrics | ConvertTo-Json -Depth 3)
+              
+              # Enviar para análise de IA
+              $aiAnalysis = Invoke-AIAnalysis -metrics $metrics -apiKey $apiKey
+              
+              # Exibir análise da IA
+              Write-Host "`n🤖 Análise da IA:"
+              Write-Host ($aiAnalysis | ConvertTo-Json -Depth 3)
+              
+              # Verificar se ação é necessária
+              if ($aiAnalysis.severity -eq "high" -or $aiAnalysis.severity -eq "critical") {
+                  Write-Warning "⚠️ Problema crítico detectado: $($aiAnalysis.issue)"
+                  
+                  # Executar recuperação automática
+                  Invoke-AutoRecovery -issue $aiAnalysis.issue -tailscaleIP $env:TAILSCALE_IP
+                  
+                  # Aguardar estabilização
+                  Start-Sleep -Seconds 30
+              }
+              elseif ($aiAnalysis.severity -eq "medium") {
+                  Write-Host "⚠️ Problema moderado detectado: $($aiAnalysis.issue)"
+                  Write-Host "💡 Solução recomendada: $($aiAnalysis.solution)"
+              }
+              else {
+                  Write-Host "✅ Sistema operando normalmente"
+              }
+              
+              # Aguardar próxima iteração
+              $elapsedTime = ((Get-Date) - $startTime).TotalSeconds
+              $waitTime = 60 - $elapsedTime
+              if ($waitTime -gt 0) {
+                  Start-Sleep -Seconds $waitTime
+              }
+          }
+          
+          Write-Warning "Monitoramento concluído após $maxIterations iterações"
 
       - name: Maintain Connection + Watch RDP User
         run: |
@@ -108,26 +295,37 @@ jobs:
                       }
 
                       Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadPath -UseBasicParsing
-                      Write-Host "✅ Downloads.bat copied to $downloadPath"
+                      Write-Host "✅ Downloads.bat copiado para $downloadPath"
 
-                      # Run the batch file for the first time
-                      cmd /c $downloadPath
-                      Write-Host "✅ Downloads.bat executed successfully"
+                      # Executar com verificação
+                      $process = Start-Process cmd -ArgumentList "/c $downloadPath" -PassThru -Wait
+                      if ($process.ExitCode -eq 0) {
+                          Write-Host "✅ Downloads.bat executado com sucesso"
+                      } else {
+                          Write-Warning "⚠️ Downloads.bat retornou código de saída $($process.ExitCode)"
+                      }
                       break
                   }
                   catch {
-                      Write-Host "❌ Error copying or executing Downloads.bat: $($_.Exception.Message)"
+                      Write-Host "❌ Erro ao copiar ou executar Downloads.bat: $($_.Exception.Message)"
                       break
                   }
               }
               else {
-                  Write-Host "[$(Get-Date)] Waiting for RDP profile to be created..."
+                  Write-Host "[$(Get-Date)] Aguardando perfil RDP ser criado..."
                   Start-Sleep -Seconds 30
               }
           }
 
-          # Keep runner alive
+          # Manter runner vivo com monitoramento contínuo
           while ($true) {
-              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              # Verificar saúde a cada 5 minutos
+              $healthCheck = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389 -WarningAction SilentlyContinue
+              if (-not $healthCheck.TcpTestSucceeded) {
+                  Write-Warning "⚠️ Perda de conectividade detectada. Tentando recuperação..."
+                  Restart-Service -Name TermService -Force
+              }
+              
+              Write-Host "[$(Get-Date)] RDP Ativo - Use Ctrl+C no workflow para terminar"
               Start-Sleep -Seconds 300
           }

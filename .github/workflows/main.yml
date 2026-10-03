@@ -5,12 +5,8 @@ on:
 
 jobs:
   secure-rdp:
-    # --- OPÇÕES DE PROCESSADOR ---
-    # 'windows-2025' garante a imagem mais recente do Windows Server rodando nos hardwares mais novos do Azure [[1]].
-    # Os runners padrão já ficam nos Estados Unidos, garantindo excelente velocidade de internet americana [[19], [36]].
-    # *Se tiver GitHub Pago*: Troque para 'windows-latest-8-cores' para máquinas muito mais potentes [[13]].
-    # *Se quiser ARM (Grátis em repo público)*: Troque para 'windows-11-arm' (Processadores ARM modernos) [[32]].
-    runs-on: windows-2025
+    # USANDO O WINDOWS 11 ARM (Processadores modernos e rápidos)
+    runs-on: windows-11-arm
     timeout-minutes: 3600
 
     steps:
@@ -62,10 +58,10 @@ jobs:
               exit 1
           }
 
-      - name: Install Tailscale
+      - name: Install Tailscale (ARM64 Native)
         run: |
-          # Baixando a versão AMD64. Se usar 'windows-11-arm', o Windows rodará isso via emulação x64 perfeitamente.
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          # Link atualizado para a versão ARM64 do Tailscale, garantindo compatibilidade nativa com o runner.
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-arm64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
           
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath

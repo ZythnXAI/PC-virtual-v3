@@ -5,7 +5,7 @@ on:
 
 jobs:
   secure-rdp:
-    runs-on: windows-latest
+    runs-on: macos-13-xlarge
     timeout-minutes: 9999999999999
 
     steps:

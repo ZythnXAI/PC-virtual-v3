@@ -1,346 +1,193 @@
-name: RDP Otimizado - Brasil (automático)
-
+name: RDP
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
   secure-rdp:
-    runs-on: windows-2025
-    timeout-minutes: 360
+    runs-on: windows-latest
+    timeout-minutes: 3600
 
     steps:
-      # Não apaga runtimes e aplicativos pré-instalados sem necessidade.
-      - name: Diagnóstico inicial e preparar pasta de trabalho
-        shell: pwsh
+      # ─────────────────────────────────────────────
+      # 1. LIBERAR ESPACIO Y MONTAR DISCO EXTRA
+      # ─────────────────────────────────────────────
+      - name: Free Up Space & Mount Extra Disk
         run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Path 'C:\RDPData' -Force | Out-Null
-          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name
-          $ramGB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
-          $gpus = (Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }) -join ', '
-          $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
-          $freeGB = [math]::Round($disk.FreeSpace / 1GB, 1)
-          Write-Host "CPU: $cpu"
-          Write-Host "RAM: $ramGB GB"
-          Write-Host "GPU/adapter gráfico reportado: $gpus"
-          Write-Host "Espaço livre em C: $freeGB GB"
-          @(
-            '## Diagnóstico da máquina remota',
-            "- **CPU:** $cpu",
-            "- **RAM detectada:** $ramGB GB",
-            "- **Adaptador gráfico:** $gpus",
-            "- **Espaço livre inicial em C:** $freeGB GB",
-            '- **Importante:** instalar aplicativos não adiciona CPU, RAM ou uma GPU física ao runner.'
-          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-          'RDP_DATA=C:\RDPData' | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "=== Disk before cleanup ===" -ForegroundColor Cyan
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name, Used, Free | Format-Table
 
-      # Instala apenas ferramentas úteis para uso de desktop; não instala “otimizadores” duvidosos.
-      - name: Instalar Google Chrome e 7-Zip automaticamente
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          $chromePaths = @(
-            "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
-            "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
+          $toRemove = @(
+            "$env:SystemDrive\hostedtoolcache\windows\Ruby",
+            "$env:SystemDrive\hostedtoolcache\windows\go",
+            "$env:SystemDrive\hostedtoolcache\windows\Python",
+            "$env:ProgramFiles\dotnet",
+            "$env:ProgramFiles\MongoDB",
+            "$env:ProgramFiles\PostgreSQL",
+            "$env:ProgramFiles (x86)\Google\Chrome",
+            "$env:ProgramFiles\Mozilla Firefox"
           )
-          if (-not ($chromePaths | Where-Object { Test-Path $_ })) {
-            $chromeMsi = Join-Path $env:TEMP 'google-chrome-enterprise.msi'
-            Invoke-WebRequest -Uri 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi' -OutFile $chromeMsi
-            $chromeProcess = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', "`"$chromeMsi`"", '/qn', '/norestart') -Wait -PassThru
-            Remove-Item $chromeMsi -Force -ErrorAction SilentlyContinue
-            if ($chromeProcess.ExitCode -notin @(0, 3010)) { throw "Instalação do Chrome falhou: código $($chromeProcess.ExitCode)." }
-            Write-Host 'Google Chrome instalado.' -ForegroundColor Green
-          } else {
-            Write-Host 'Google Chrome já está instalado.' -ForegroundColor Green
-          }
-
-          $sevenZip = "$env:ProgramFiles\7-Zip\7z.exe"
-          if (-not (Test-Path $sevenZip)) {
-            $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/ip7z/7zip/releases/latest' -Headers @{ 'User-Agent' = 'RDP-Automatic-Setup' }
-            $asset = $release.assets | Where-Object { $_.name -match '^7z\d+-x64\.exe$' } | Select-Object -First 1
-            if (-not $asset) { throw 'Não foi possível localizar o instalador x64 do 7-Zip na versão estável.' }
-            $sevenZipInstaller = Join-Path $env:TEMP $asset.name
-            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $sevenZipInstaller
-            if ((Get-Item $sevenZipInstaller).Length -lt 500KB) { throw 'O instalador do 7-Zip baixado parece incompleto.' }
-            $sevenZipProcess = Start-Process -FilePath $sevenZipInstaller -ArgumentList '/S' -Wait -PassThru
-            Remove-Item $sevenZipInstaller -Force -ErrorAction SilentlyContinue
-            if ($sevenZipProcess.ExitCode -ne 0) { throw "Instalação do 7-Zip falhou: código $($sevenZipProcess.ExitCode)." }
-            if (-not (Test-Path $sevenZip)) { Write-Warning 'O 7-Zip pode ter sido instalado em um caminho alternativo; confira os aplicativos instalados.' }
-            else { Write-Host '7-Zip instalado.' -ForegroundColor Green }
-          } else {
-            Write-Host '7-Zip já está instalado.' -ForegroundColor Green
-          }
-
-      - name: Instalar runtimes oficiais, Process Explorer e uBlock Origin Lite
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          # Runtime oficial Microsoft Visual C++ v14 (x64 e x86).
-          # Downloads permalink oficiais sempre apontam para a versão suportada mais recente.
-          foreach ($arch in @('x64', 'x86')) {
-            $vcUrl = "https://aka.ms/vc14/vc_redist.$arch.exe"
-            $vcFile = Join-Path $env:TEMP "vc_redist.$arch.exe"
-            Invoke-WebRequest -Uri $vcUrl -OutFile $vcFile
-            if ((Get-Item $vcFile).Length -lt 1MB) { throw "O instalador Visual C++ $arch parece incompleto." }
-            $vcProcess = Start-Process -FilePath $vcFile -ArgumentList @('/install', '/quiet', '/norestart') -Wait -PassThru
-            Remove-Item $vcFile -Force -ErrorAction SilentlyContinue
-            if ($vcProcess.ExitCode -notin @(0, 3010)) {
-              throw "Instalação do Visual C++ $arch falhou: código $($vcProcess.ExitCode)."
-            }
-            Write-Host "Visual C++ Redistributable $arch verificado/instalado (código $($vcProcess.ExitCode))." -ForegroundColor Green
-          }
-
-          # Sysinternals Process Explorer, obtido diretamente da Microsoft.
-          $toolsRoot = 'C:\Tools\ProcessExplorer'
-          New-Item -ItemType Directory -Path $toolsRoot -Force | Out-Null
-          $procZip = Join-Path $env:TEMP 'ProcessExplorer.zip'
-          Invoke-WebRequest -Uri 'https://download.sysinternals.com/files/ProcessExplorer.zip' -OutFile $procZip
-          if ((Get-Item $procZip).Length -lt 1MB) { throw 'O arquivo do Process Explorer parece incompleto.' }
-          Expand-Archive -Path $procZip -DestinationPath $toolsRoot -Force
-          Remove-Item $procZip -Force -ErrorAction SilentlyContinue
-          $procExe = Join-Path $toolsRoot 'procexp64.exe'
-          if (-not (Test-Path $procExe)) { $procExe = Join-Path $toolsRoot 'procexp.exe' }
-          if (-not (Test-Path $procExe)) { throw 'O executável do Process Explorer não foi encontrado após extração.' }
-          try {
-            $shell = New-Object -ComObject WScript.Shell
-            $shortcut = $shell.CreateShortcut('C:\Users\Public\Desktop\Process Explorer.lnk')
-            $shortcut.TargetPath = $procExe
-            $shortcut.WorkingDirectory = $toolsRoot
-            $shortcut.Description = 'Monitoramento avançado de processos - Microsoft Sysinternals'
-            $shortcut.Save()
-          } catch {
-            Write-Warning "Process Explorer instalado em $toolsRoot, mas o atalho não foi criado: $($_.Exception.Message)"
-          }
-
-          # Instalação gerenciada da extensão oficial uBlock Origin Lite para Chrome.
-          # Isso não instala extensões no navegador do dispositivo local; aplica-se ao Chrome remoto.
-          $chromePolicy = 'HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist'
-          New-Item -Path $chromePolicy -Force | Out-Null
-          New-ItemProperty -Path $chromePolicy -Name '1' -PropertyType String `
-            -Value 'ddkjiahejlhfcafbddmgiahcphecmpfh;https://clients2.google.com/service/update2/crx' -Force | Out-Null
-
-          Write-Host 'Runtimes oficiais, Process Explorer e política da extensão do Chrome configurados.' -ForegroundColor Green
-
-      - name: Configurar Brasil e plano de energia Alto desempenho
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Continue'
-          Set-TimeZone -Id 'E. South America Standard Time'
-          Set-Culture -CultureInfo 'pt-BR'
-          Set-WinSystemLocale -SystemLocale 'pt-BR'
-          Set-WinHomeLocation -GeoId 32
-          $languageList = New-WinUserLanguageList -Language 'pt-BR'
-          Set-WinUserLanguageList -LanguageList $languageList -Force
-
-          $copySettings = Get-Command Copy-UserInternationalSettingsToSystem -ErrorAction SilentlyContinue
-          if ($copySettings) {
-            try { Copy-UserInternationalSettingsToSystem -WelcomeScreen $true -NewUser $true }
-            catch { Write-Warning "A cópia das configurações regionais para novos usuários falhou: $($_.Exception.Message)" }
-          }
-
-          # SCHEME_MIN corresponde ao plano Alto desempenho.
-          & powercfg /setactive SCHEME_MIN
-          if ($LASTEXITCODE -ne 0) { Write-Warning 'O ambiente não permitiu ativar o plano Alto desempenho.' }
-          & powercfg /change monitor-timeout-ac 0
-          & powercfg /change standby-timeout-ac 0
-          & powercfg /change hibernate-timeout-ac 0
-          & powercfg /hibernate off
-
-          Write-Host "Fuso: $((Get-TimeZone).Id)"
-          & powercfg /getactivescheme
-
-      - name: Otimizar perfil visual e TCP sem tweaks agressivos
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Continue'
-
-          # Modo de desempenho visual para novos perfis que venham a ser criados no host.
-          # Carrega o hive do perfil padrão apenas durante a alteração e descarrega no finally.
-          $defaultHive = 'C:\Users\Default\NTUSER.DAT'
-          $regExe = Join-Path $env:windir 'System32\reg.exe'
-          if (Test-Path $defaultHive) {
-            & $regExe load 'HKU\RDPDefault' $defaultHive | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-              try {
-                & $regExe add 'HKU\RDPDefault\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' /v VisualFXSetting /t REG_DWORD /d 2 /f | Out-Null
-                & $regExe add 'HKU\RDPDefault\Control Panel\Desktop' /v MinAnimate /t REG_SZ /d 0 /f | Out-Null
-                Write-Host 'Perfil padrão ajustado para priorizar desempenho visual.' -ForegroundColor Green
-              } finally {
-                & $regExe unload 'HKU\RDPDefault' | Out-Null
-              }
-            } else {
-              Write-Warning 'Não foi possível carregar o perfil padrão; ajustes visuais foram ignorados.'
+          foreach ($path in $toRemove) {
+            if (Test-Path $path) {
+              Remove-Item $path -Recurse -Force -ErrorAction SilentlyContinue
+              Write-Host "Removed: $path" -ForegroundColor Green
             }
           }
 
-          # Normal preserva o ajuste automático da janela TCP. highlyrestricted é conservador
-          # e pode limitar throughput; por isso, não é usado como um tweak universal.
-          & netsh interface tcp set global autotuninglevel=normal | Out-Null
-          if ($LASTEXITCODE -ne 0) { Write-Warning 'Não foi possível definir TCP autotuning normal; mantendo configuração existente.' }
-          Write-Host 'Parâmetros TCP atuais:'
-          & netsh interface tcp show global
+          Write-Host "=== Disk D: info ===" -ForegroundColor Cyan
+          Get-PSDrive D -ErrorAction SilentlyContinue
 
-          # Não força uma política de compressão RDP: o padrão do Windows seleciona o algoritmo
-          # conforme os recursos disponíveis. O transporte RDP também fica em seleção automática.
+          $vhdPath = "D:\extra_disk.vhdx"
+          New-VHD -Path $vhdPath -SizeBytes 100GB -Dynamic -ErrorAction SilentlyContinue
+          Mount-VHD -Path $vhdPath
+          $disk = Get-Disk | Where-Object { $_.OperationalStatus -eq 'Online' -and $_.PartitionStyle -eq 'RAW' } | Select-Object -Last 1
+          if ($disk) {
+            Initialize-Disk -Number $disk.Number -PartitionStyle MBR -PassThru |
+              New-Partition -AssignDriveLetter -UseMaximumSize |
+              Format-Volume -FileSystem NTFS -NewFileSystemLabel "ExtraDisk" -Confirm:$false
+          }
 
-      - name: Ajustar RDP para responsividade e proteger o acesso
-        shell: pwsh
+          Write-Host "=== Disk after setup ===" -ForegroundColor Cyan
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name, Used, Free | Format-Table
+
+          "EXTRA_DISK=E:" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "STORAGE_ROOT=D:\storage" | Out-File -FilePath $env:GITHUB_ENV -Append
+          New-Item -ItemType Directory -Force -Path "D:\storage" | Out-Null
+
+      # ─────────────────────────────────────────────
+      # 3. CONFIGURAR RDP
+      # ─────────────────────────────────────────────
+      - name: Configure RDP Settings
         run: |
-          $ErrorActionPreference = 'Stop'
-          $tsBase = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
-          $rdpTcp = Join-Path $tsBase 'WinStations\RDP-Tcp'
-          $winStations = Join-Path $tsBase 'WinStations'
-          New-Item -Path $rdpTcp -Force | Out-Null
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name "SecurityLayer" -Value 0 -Force
 
-          Set-ItemProperty -Path $tsBase -Name 'fDenyTSConnections' -Value 0 -Force
-          # Não desative NLA nem a camada TLS.
-          Set-ItemProperty -Path $rdpTcp -Name 'UserAuthentication' -Value 1 -Force
-          Set-ItemProperty -Path $rdpTcp -Name 'SecurityLayer' -Value 2 -Force
-          Set-ItemProperty -Path $rdpTcp -Name 'MinEncryptionLevel' -Value 3 -Force
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
+          netsh advfirewall firewall add rule name="RDP-Tailscale" `
+            dir=in action=allow protocol=TCP localport=3389
 
-          # Este ajuste documentado eleva o limite do protocolo a até 60 FPS, não 240 FPS.
-          New-ItemProperty -Path $winStations -Name 'DWMFRAMEINTERVAL' -PropertyType DWord -Value 15 -Force | Out-Null
-
-          $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
-          New-Item -Path $policyPath -Force | Out-Null
-          # Menos tráfego gráfico; prioriza H.264/AVC e hardware caso exista suporte real.
-          New-ItemProperty -Path $policyPath -Name 'fNoRemoteDesktopWallpaper' -PropertyType DWord -Value 1 -Force | Out-Null
-          New-ItemProperty -Path $policyPath -Name 'AVCHardwareEncodePreferred' -PropertyType DWord -Value 1 -Force | Out-Null
-          New-ItemProperty -Path $policyPath -Name 'AVC444ModePreferred' -PropertyType DWord -Value 1 -Force | Out-Null
-
-          # Desativa regras RDP genéricas e permite 3389 apenas pela faixa de IPs Tailscale.
-          Get-NetFirewallRule -ErrorAction SilentlyContinue |
-            Where-Object { $_.DisplayGroup -match 'Remote Desktop|Área de Trabalho Remota' } |
-            Disable-NetFirewallRule -ErrorAction SilentlyContinue
-          Get-NetFirewallRule -DisplayName 'RDP-Tailscale-TCP','RDP-Tailscale-UDP' -ErrorAction SilentlyContinue |
-            Remove-NetFirewallRule -ErrorAction SilentlyContinue
-          New-NetFirewallRule -DisplayName 'RDP-Tailscale-TCP' -Direction Inbound -Action Allow `
-            -Protocol TCP -LocalPort 3389 -RemoteAddress '100.64.0.0/10' -Profile Any | Out-Null
-          New-NetFirewallRule -DisplayName 'RDP-Tailscale-UDP' -Direction Inbound -Action Allow `
-            -Protocol UDP -LocalPort 3389 -RemoteAddress '100.64.0.0/10' -Profile Any | Out-Null
-
-          Set-Service -Name TermService -StartupType Automatic
           Restart-Service -Name TermService -Force
-          Write-Host 'RDP configurado com NLA/TLS e regras limitadas ao Tailscale.' -ForegroundColor Green
+          Write-Host "RDP configured." -ForegroundColor Green
 
-      - name: Criar usuário RDP usando senha do Secret
-        shell: pwsh
-        env:
-          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+      # ─────────────────────────────────────────────
+      # 4. CREAR USUARIO RDP
+      # ─────────────────────────────────────────────
+      - name: Create RDP User
         run: |
-          $ErrorActionPreference = 'Stop'
-          if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) {
-            throw 'Falta configurar o Secret RDP_PASSWORD em Settings > Secrets and variables > Actions.'
+          $charSet = @{
+            Upper   = [char[]](65..90)
+            Lower   = [char[]](97..122)
+            Number  = [char[]](48..57)
+            Special = [char[]]@(33,35,36,37,38,42,43,45,61,64)
           }
-          if ($env:RDP_PASSWORD.Length -lt 14) {
-            throw 'RDP_PASSWORD deve ter pelo menos 14 caracteres. A senha nunca será impressa nos logs.'
+          $rawPassword  = @()
+          $rawPassword += $charSet.Upper   | Get-Random -Count 4
+          $rawPassword += $charSet.Lower   | Get-Random -Count 4
+          $rawPassword += $charSet.Number  | Get-Random -Count 4
+          $rawPassword += $charSet.Special | Get-Random -Count 4
+          $password = -join ($rawPassword | Sort-Object { Get-Random })
+
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Administrators"        -Member "RDP" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users"  -Member "RDP" -ErrorAction SilentlyContinue
+
+          if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
+            Write-Error "User creation failed"; exit 1
           }
 
-          $securePass = ConvertTo-SecureString $env:RDP_PASSWORD -AsPlainText -Force
-          $existingUser = Get-LocalUser -Name 'RDP' -ErrorAction SilentlyContinue
-          if ($existingUser) {
-            Set-LocalUser -Name 'RDP' -Password $securePass -PasswordNeverExpires $true
-          } else {
-            New-LocalUser -Name 'RDP' -Password $securePass -AccountNeverExpires -PasswordNeverExpires -ErrorAction Stop | Out-Null
-          }
-          foreach ($group in @('Administrators', 'Remote Desktop Users')) {
-            try { Add-LocalGroupMember -Group $group -Member 'RDP' -ErrorAction Stop }
-            catch { if ($_.Exception.Message -notmatch 'already a member|já é membro') { Write-Warning "Grupo ${group}: $($_.Exception.Message)" } }
-          }
-          if (-not (Get-LocalUser -Name 'RDP' -ErrorAction SilentlyContinue)) { throw 'Falha ao criar o usuário RDP.' }
-          Write-Host 'Usuário RDP preparado; senha não exibida.' -ForegroundColor Green
+          "RDP_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "RDP user created." -ForegroundColor Green
 
-      - name: Instalar Tailscale estável
-        shell: pwsh
+      # ─────────────────────────────────────────────
+      # 5. INSTALAR TAILSCALE
+      # ─────────────────────────────────────────────
+      - name: Install Tailscale
         run: |
-          $ErrorActionPreference = 'Stop'
-          $installer = Join-Path $env:TEMP 'tailscale.msi'
-          Invoke-WebRequest -Uri 'https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi' -OutFile $installer
-          $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', "`"$installer`"", '/qn', '/norestart') -Wait -PassThru
-          Remove-Item $installer -Force -ErrorAction SilentlyContinue
-          if ($process.ExitCode -notin @(0, 3010)) { throw "A instalação do Tailscale falhou: código $($process.ExitCode)." }
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installer = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installer -UseBasicParsing
+          Start-Process msiexec.exe -ArgumentList "/i","`"$installer`"","/quiet","/norestart" -Wait
+          Remove-Item $installer -Force
 
-      - name: Conectar ao Tailscale
-        shell: pwsh
-        env:
-          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+      # ─────────────────────────────────────────────
+      # 6. CONECTAR TAILSCALE
+      # ─────────────────────────────────────────────
+      - name: Connect Tailscale
         run: |
-          $ErrorActionPreference = 'Stop'
-          if ([string]::IsNullOrWhiteSpace($env:TAILSCALE_AUTH_KEY)) {
-            throw 'Falta configurar o Secret TAILSCALE_AUTH_KEY em Settings > Secrets and variables > Actions.'
-          }
-          $ts = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
-          if (-not (Test-Path $ts)) { throw 'Executável do Tailscale não encontrado.' }
-          & $ts up "--authkey=$env:TAILSCALE_AUTH_KEY" "--hostname=gha-rdp-$env:GITHUB_RUN_ID" '--accept-dns=false'
-          if ($LASTEXITCODE -ne 0) { throw 'Não foi possível conectar o Tailscale.' }
+          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          & $ts up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
 
           $tsIP = $null
-          for ($i = 0; $i -lt 25 -and -not $tsIP; $i++) {
-            Start-Sleep -Seconds 2
-            $tsIP = (& $ts ip -4 2>$null | Select-Object -First 1)
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 15) {
+            Start-Sleep -Seconds 4
+            $tsIP = & $ts ip -4 2>$null
+            $retries++
           }
-          if (-not $tsIP) { throw 'O Tailscale não recebeu um endereço IPv4.' }
-          "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "Tailscale conectado: $tsIP" -ForegroundColor Green
 
-      - name: Verificar RDP e registrar relatório
-        shell: pwsh
+          if (-not $tsIP) { Write-Error "Tailscale IP not assigned."; exit 1 }
+          "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Tailscale IP: $tsIP" -ForegroundColor Green
+
+      # ─────────────────────────────────────────────
+      # 7. VERIFICAR RDP
+      # ─────────────────────────────────────────────
+      - name: Verify RDP
         run: |
-          $ErrorActionPreference = 'Stop'
-          $listeners = Get-NetTCPConnection -State Listen -LocalPort 3389 -ErrorAction SilentlyContinue
-          if (-not $listeners) { throw 'O serviço RDP não está escutando na porta TCP 3389.' }
-          $ts = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
-          & $ts status
-
-          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name
-          $ramGB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
-          $gpus = (Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }) -join ', '
-          $freeGB = [math]::Round((Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'").FreeSpace / 1GB, 1)
-          $netFxVersion = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full' -Name Version -ErrorAction SilentlyContinue).Version
-          if (-not $netFxVersion) { $netFxVersion = 'não detectado' }
-          $dotnetRuntimes = 'dotnet CLI/runtimes não detectados'
-          if (Get-Command dotnet -ErrorAction SilentlyContinue) {
-            $runtimeLines = @(& dotnet --list-runtimes 2>$null | Select-Object -First 8)
-            if ($runtimeLines.Count -gt 0) { $dotnetRuntimes = $runtimeLines -join '; ' }
+          $test = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $test.TcpTestSucceeded) {
+            Write-Error "RDP port 3389 not reachable"; exit 1
           }
-          @(
-            '## RDP pronto',
-            "- **IP Tailscale:** ``$env:TAILSCALE_IP``",
-            '- **Usuário:** `RDP`',
-            '- **Senha:** valor do Secret `RDP_PASSWORD` (não é exibido).',
-            '- **Região:** Brasil (`pt-BR`)',
-            '- **Fuso horário:** `E. South America Standard Time`',
-            '- **Energia:** High Performance, quando suportado pelo runner.',
-            '- **Segurança:** NLA/TLS; porta RDP permitida apenas pela faixa IPv4 do Tailscale.',
-            '- **Gráficos:** wallpaper remoto desativado, preferência H.264/AVC e modo de desempenho visual no perfil padrão.',
-            '- **Rede:** TCP autotuning em `normal`; transporte UDP/TCP e compressão RDP mantidos em seleção automática do Windows.',
-            '- **Ferramentas:** Process Explorer (Sysinternals), Visual C++ Redistributable x86/x64 e uBlock Origin Lite no Chrome remoto.',
-            "- **.NET Framework v4:** $netFxVersion",
-            "- **.NET runtimes detectados:** $dotnetRuntimes",
-            '- **Limite RDP:** ajuste documentado para até 60 FPS; 240 Hz não é garantido.',
-            "- **CPU:** $cpu",
-            "- **RAM detectada:** $ramGB GB",
-            "- **Adaptador gráfico:** $gpus",
-            "- **Espaço livre em C:** $freeGB GB",
-            '- **Aplicativos adicionais:** Google Chrome e 7-Zip.',
-            '- **Duração:** job hospedado limitado a 6 horas; arquivos e instalações não persistem depois que o runner é encerrado.'
-          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
-          Write-Host "IP Tailscale: $env:TAILSCALE_IP"
-          Write-Host 'Usuário: RDP'
-          Write-Host 'Senha guardada no Secret RDP_PASSWORD.'
-          Write-Host "CPU: $cpu | RAM: $ramGB GB | GPU: $gpus | Espaço livre C: $freeGB GB"
+          Write-Host "RDP reachable on port 3389 ✓" -ForegroundColor Green
 
-      - name: Manter o runner ativo até o limite do GitHub
-        shell: pwsh
+      # ─────────────────────────────────────────────
+      # 8. VERIFICAR APLICACIONES INSTALADAS
+      # ─────────────────────────────────────────────
+      - name: Verify Installed Apps
         run: |
-          $minute = 0
+          Write-Host ""
+          Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║         VERIFICATION REPORT                      ║" -ForegroundColor Cyan
+          Write-Host "╠══════════════════════════════════════════════════╣" -ForegroundColor Cyan
+          
+          Write-Host "║  NODE.JS:" -NoNewline
+          try { node --version 2>$null; Write-Host " ✓" -ForegroundColor Green } catch { Write-Host " ✗" -ForegroundColor Red }
+          
+          Write-Host "║  NPM:    " -NoNewline
+          try { npm --version 2>$null; Write-Host " ✓" -ForegroundColor Green } catch { Write-Host " ✗" -ForegroundColor Red }
+          
+          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          Write-Host ""
+
+      # ─────────────────────────────────────────────
+      # 9. MANTENER SESIÓN ACTIVA
+      # ─────────────────────────────────────────────
+      - name: Keep Alive & Show Credentials
+        run: |
+          Write-Host ""
+          Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║         RDP ACCESS INFO                          ║" -ForegroundColor Cyan
+          Write-Host "╠══════════════════════════════════════════════════╣" -ForegroundColor Cyan
+          Write-Host "║  IP:       $env:TAILSCALE_IP"
+          Write-Host "║  User:     RDP"
+          Write-Host "║  Password: $env:RDP_PASSWORD"
+          Write-Host "╠══════════════════════════════════════════════════╣" -ForegroundColor Cyan
+          Write-Host "║  STORAGE                                         ║" -ForegroundColor Cyan
+          Write-Host "║  C: ~14GB (sistema)                              ║"
+          Write-Host "║  D: ~70GB (runner disk)                          ║"
+          Write-Host "║  E: ~100GB (VHD extra)                           ║"
+          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          Write-Host ""
+
+          # Mantener la sesión activa
+          $i = 0
           while ($true) {
             Start-Sleep -Seconds 60
-            $minute++
-            Write-Host "RDP ativo por aproximadamente $minute minutos." -ForegroundColor DarkGray
+            $i++
+            Write-Host "Keep alive... ($i minutos)" -ForegroundColor DarkGray
           }
+          

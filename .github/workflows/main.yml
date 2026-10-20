@@ -1,113 +1,337 @@
-name: RDP
+# ==============================================================================
+#  RDP temporário: Windows Server 2022 no GitHub Actions + Tailscale
+#
+#  Antes de rodar:
+#   1) Settings > Secrets and variables > Actions > New repository secret
+#        TAILSCALE_AUTHKEY : chave do Tailscale (marque Reusable + Ephemeral)
+#        RDP_PASSWORD      : senha do RDP (12+ caracteres, com maiúscula,
+#                            minúscula e número)
+#   2) (Opcional) Variables > WALLPAPER_URL : link direto da imagem do papel
+#      de parede (ou suba um arquivo wallpaper.jpg na raiz do repositório)
+#   3) Salve este arquivo em .github/workflows/rdp.yml
+#
+#  Rodar:     Actions > "RDP Windows Server 2022" > Run workflow
+#  Conectar:  Windows App > Adicionar PC > IP 100.x do Tailscale (aparece no
+#             Summary da execução) | usuário: runneradmin | senha: RDP_PASSWORD
+#  Encerrar antes: crie o arquivo C:\parar.txt na máquina ou cancele a execução
+# ==============================================================================
+name: RDP Windows Server 2022
 
 on:
   workflow_dispatch:
+    inputs:
+      minutos:
+        description: 'Duração da sessão em minutos (máx. 355)'
+        required: false
+        default: '350'
+      wallpaper_url:
+        description: 'Link direto da imagem do papel de parede (jpg/png). Vazio = variável WALLPAPER_URL, wallpaper.jpg do repo ou gradiente'
+        required: false
+        default: ''
+      pacotes_choco:
+        description: 'Programas extras via Chocolatey, separados por espaço (ex: vlc 7zip)'
+        required: false
+        default: ''
+      runner:
+        description: 'windows-2022 (padrão) ou o nome de um runner maior (pago)'
+        required: false
+        default: 'windows-2022'
+
+permissions:
+  contents: read
 
 jobs:
-  secure-rdp:
-    runs-on: windows-2022
-    timeout-minutes: 3600
+  rdp:
+    name: Windows Server 2022 + RDP
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360        # limite máximo do GitHub para um job
+    defaults:
+      run:
+        shell: pwsh
 
     steps:
-      - name: Configure Core RDP Settings
+      # ------------------------------------------------------------------------
+      - name: 'Validar secrets e marcar o início'
+        env:
+          TS_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+          MINUTOS: ${{ inputs.minutos }}
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication (if needed)
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-                             -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "SecurityLayer" -Value 0 -Force
-
-          # Remove any existing rule with the same name to avoid duplication
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          
-          # For testing, allow any incoming connection on port 3389
-          netsh advfirewall firewall add rule name="RDP-Tailscale" `
-            dir=in action=allow protocol=TCP localport=3389
-
-          # (Optional) Restart the Remote Desktop service to ensure changes take effect
-          Restart-Service -Name TermService -Force
-
-      - name: Create RDP User with Secure Password
-        run: |
-          Add-Type -AssemblyName System.Security
-          $charSet = @{
-              Upper   = [char[]](65..90)      # A-Z
-              Lower   = [char[]](97..122)     # a-z
-              Number  = [char[]](48..57)      # 0-9
-              Special = ([char[]](33..47) + [char[]](58..64) +
-                         [char[]](91..96) + [char[]](123..126)) # Special characters
+          if ([string]::IsNullOrEmpty($env:TS_AUTHKEY)) { throw 'Falta o secret TAILSCALE_AUTHKEY.' }
+          $pw = $env:RDP_PASSWORD
+          if ([string]::IsNullOrEmpty($pw)) { throw 'Falta o secret RDP_PASSWORD.' }
+          if ($pw.Length -lt 12 -or $pw -cnotmatch '[A-Z]' -or $pw -cnotmatch '[a-z]' -or $pw -notmatch '[0-9]') {
+            throw 'RDP_PASSWORD fraca: use 12+ caracteres com maiúscula, minúscula e número.'
           }
-          $rawPassword = @()
-          $rawPassword += $charSet.Upper | Get-Random -Count 4
-          $rawPassword += $charSet.Lower | Get-Random -Count 4
-          $rawPassword += $charSet.Number | Get-Random -Count 4
-          $rawPassword += $charSet.Special | Get-Random -Count 4
-          $password = -join ($rawPassword | Sort-Object { Get-Random })
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
-          
-          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
-          
-          if (-not (Get-LocalUser -Name "RDP")) {
-              Write-Error "User creation failed"
-              exit 1
+          $m = 0
+          if (-not [int]::TryParse("$env:MINUTOS", [ref]$m) -or $m -lt 10) { $m = 350 }
+          if ($m -gt 355) { $m = 355 }
+          Add-Content -Path $env:GITHUB_ENV -Value "SESSION_MIN=$m"
+          Add-Content -Path $env:GITHUB_ENV -Value "START_EPOCH=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+          Write-Host "Sessão programada para $m minutos."
+
+      # ------------------------------------------------------------------------
+      - name: 'Conectar ao Tailscale'
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: github-rdp
+          version: latest
+          args: --unattended --accept-dns=false
+
+      # ------------------------------------------------------------------------
+      - name: 'Ativar RDP (somente pela rede Tailscale)'
+        env:
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Set-Reg($Path, $Name, $Value, $Type = 'DWord') {
+            if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+            New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
           }
 
-      - name: Install Tailscale
-        run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          Remove-Item $installerPath -Force
+          # Senha do usuário runneradmin
+          try {
+            $u = [ADSI]"WinNT://$env:COMPUTERNAME/runneradmin,user"
+            $u.Invoke('SetPassword', $env:RDP_PASSWORD)
+          } catch {
+            Write-Host "ADSI falhou ($($_.Exception.Message)); tentando net user..."
+            net user runneradmin "$env:RDP_PASSWORD" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Não foi possível definir a senha do runneradmin (política de senha?).' }
+          }
+          net user runneradmin /active:yes | Out-Null
 
-      - name: Establish Tailscale Connection
-        run: |
-          # Bring up Tailscale with the provided auth key and set a unique hostname
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          
-          # Wait for Tailscale to assign an IP
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              Start-Sleep -Seconds 5
-              $retries++
-          }
-          
-          if (-not $tsIP) {
-              Write-Error "Tailscale IP not assigned. Exiting."
-              exit 1
-          }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-      
-      - name: Verify RDP Accessibility
-        run: |
-          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-          
-          # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
-          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
-          if (-not $testResult.TcpTestSucceeded) {
-              Write-Error "TCP connection to RDP port 3389 failed"
-              exit 1
-          }
-          Write-Host "TCP connectivity successful!"
+          # Habilitar RDP (com NLA)
+          $ts = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'
+          Set-Reg $ts 'fDenyTSConnections' 0
+          Set-Reg "$ts\WinStations\RDP-Tcp" 'UserAuthentication' 1
+          Set-Service TermService -StartupType Automatic
+          if ((Get-Service TermService).Status -ne 'Running') { Start-Service TermService }
 
-      - name: Maintain Connection
-        run: |
-          Write-Host "`n=== RDP ACCESS ==="
-          Write-Host "Address: $env:TAILSCALE_IP"
-          Write-Host "Username: RDP"
-          Write-Host "Password: $(echo $env:RDP_CREDS)"
-          Write-Host "==================`n"
-          
-          # Keep runner active indefinitely (or until manually cancelled)
-          while ($true) {
-              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
-              Start-Sleep -Seconds 300
+          # Firewall: só aceita RDP vindo da rede Tailscale
+          Disable-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction SilentlyContinue
+          foreach ($proto in 'TCP', 'UDP') {
+            Remove-NetFirewallRule -DisplayName "RDP Tailscale $proto" -ErrorAction SilentlyContinue
+            $fw = @{
+              DisplayName   = "RDP Tailscale $proto"
+              Direction     = 'Inbound'
+              Protocol      = $proto
+              LocalPort     = 3389
+              RemoteAddress = @('100.64.0.0/10', 'fd7a:115c:a1e0::/48')
+              Action        = 'Allow'
+              Profile       = 'Any'
+            }
+            New-NetFirewallRule @fw | Out-Null
           }
+
+          # Desempenho e estabilidade do RDP
+          $pol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+          Set-Reg $pol 'SelectTransport' 0             # UDP + TCP (mais fluido)
+          Set-Reg $pol 'fNoRemoteDesktopWallpaper' 0   # permite papel de parede na sessão
+          Set-Reg $pol 'MaxDisconnectionTime' 0        # sessão desconectada não é encerrada
+          Set-Reg $pol 'MaxIdleTime' 0
+          Set-Reg $pol 'MaxConnectionTime' 0
+          Set-Reg $pol 'KeepAliveEnable' 1
+          Set-Reg $pol 'KeepAliveInterval' 1
+          Set-Reg "$ts\WinStations" 'DWMFRAMEINTERVAL' 15   # até 60 FPS
+
+          # Confirmar que a porta 3389 está escutando
+          Start-Sleep -Seconds 3
+          $listen = { Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue }
+          if (-not (& $listen)) {
+            Restart-Service TermService -Force
+            Start-Sleep -Seconds 5
+          }
+          if (& $listen) { Write-Host 'RDP escutando na porta 3389.' } else { throw 'RDP não está escutando na porta 3389.' }
+          exit 0
+
+      # ------------------------------------------------------------------------
+      - name: 'Otimizar desempenho'
+        run: |
+          $ErrorActionPreference = 'Continue'
+
+          # Plano de energia: alto desempenho, sem suspender nem apagar a tela
+          powercfg /setactive SCHEME_MIN
+          powercfg /change monitor-timeout-ac 0
+          powercfg /change standby-timeout-ac 0
+          powercfg /change hibernate-timeout-ac 0
+
+          # Serviços que só gastam CPU/disco numa sessão temporária
+          foreach ($s in 'WSearch', 'SysMain', 'wuauserv', 'UsoSvc', 'DiagTrack', 'WerSvc', 'dmwappushservice') {
+            try { Stop-Service $s -Force -ErrorAction Stop } catch { }
+            try { Set-Service $s -StartupType Disabled -ErrorAction Stop } catch { }
+          }
+
+          # Antivírus em tempo real consome CPU à toa numa VM descartável
+          try {
+            Set-MpPreference -DisableRealtimeMonitoring $true -DisableBehaviorMonitoring $true -DisableIOAVProtection $true -DisableScriptScanning $true -ErrorAction Stop
+          } catch { Write-Host "Defender: $($_.Exception.Message)" }
+
+          # Áudio pelo RDP e efeitos visuais (no Windows Server vêm desligados)
+          foreach ($s in 'AudioEndpointBuilder', 'Audiosrv', 'Themes', 'UxSms') {
+            try { Set-Service $s -StartupType Automatic -ErrorAction Stop; Start-Service $s -ErrorAction Stop } catch { }
+          }
+          exit 0
+
+      # ------------------------------------------------------------------------
+      - name: 'Personalizar visual (wallpaper, tema escuro, transparência)'
+        env:
+          WALLPAPER_URL: ${{ inputs.wallpaper_url || vars.WALLPAPER_URL }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $ProgressPreference = 'SilentlyContinue'
+          function Set-Reg($Path, $Name, $Value, $Type = 'DWord') {
+            if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+            New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
+          }
+          Add-Type -AssemblyName System.Drawing
+
+          # --- Papel de parede: URL informada > wallpaper.jpg do repo > gradiente ---
+          $pics = Join-Path $env:USERPROFILE 'Pictures'
+          New-Item -ItemType Directory -Path $pics -Force | Out-Null
+          $wall = Join-Path $pics 'wallpaper.jpg'
+          $got = $false
+          $urls = @($env:WALLPAPER_URL, "https://raw.githubusercontent.com/$env:GITHUB_REPOSITORY/$env:GITHUB_REF_NAME/wallpaper.jpg") | Where-Object { $_ }
+          foreach ($url in $urls) {
+            try {
+              Invoke-WebRequest -Uri $url -OutFile $wall -TimeoutSec 60 -ErrorAction Stop
+              $img = [System.Drawing.Image]::FromFile($wall)
+              Write-Host ('Wallpaper baixado: {0}x{1}' -f $img.Width, $img.Height)
+              $img.Dispose()
+              $got = $true
+              break
+            } catch {
+              Write-Host "Wallpaper indisponível em $url ($($_.Exception.Message))"
+            }
+          }
+          if (-not $got) {
+            Write-Host 'Nenhum wallpaper válido: gerando um gradiente padrão.'
+            $bmp = [System.Drawing.Bitmap]::new(1920, 1080)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $rect = [System.Drawing.Rectangle]::new(0, 0, 1920, 1080)
+            $c1 = [System.Drawing.Color]::FromArgb(255, 20, 10, 55)
+            $c2 = [System.Drawing.Color]::FromArgb(255, 255, 90, 160)
+            $mode = [System.Drawing.Drawing2D.LinearGradientMode]::ForwardDiagonal
+            $brush = [System.Drawing.Drawing2D.LinearGradientBrush]::new($rect, $c1, $c2, $mode)
+            $g.FillRectangle($brush, $rect)
+            $brush.Dispose(); $g.Dispose()
+            $bmp.Save($wall, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+            $bmp.Dispose()
+          }
+
+          # --- Aplicado no perfil do runneradmin (vale quando você entrar pelo RDP) ---
+          $desk = 'HKCU:\Control Panel\Desktop'
+          Set-Reg $desk 'Wallpaper' $wall 'String'
+          Set-Reg $desk 'WallpaperStyle' '10' 'String'
+          Set-Reg $desk 'TileWallpaper' '0' 'String'
+          Set-Reg $desk 'MenuShowDelay' '0' 'String'
+          Set-Reg "$desk\WindowMetrics" 'MinAnimate' '0' 'String'
+          Remove-Item "$env:APPDATA\Microsoft\Windows\Themes\TranscodedWallpaper" -Force -ErrorAction SilentlyContinue
+          Remove-Item "$env:APPDATA\Microsoft\Windows\Themes\CachedFiles" -Recurse -Force -ErrorAction SilentlyContinue
+
+          # --- Tema escuro + transparência nativa ---
+          $pers = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+          Set-Reg $pers 'AppsUseLightTheme' 0
+          Set-Reg $pers 'SystemUsesLightTheme' 0
+          Set-Reg $pers 'EnableTransparency' 1
+          Set-Reg $pers 'ColorPrevalence' 0
+          Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'UseOLEDTaskbarTransparency' 1
+
+          # --- Explorer e barra de tarefas ---
+          $adv = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+          Set-Reg $adv 'HideFileExt' 0
+          Set-Reg $adv 'Hidden' 1
+          Set-Reg $adv 'ShowTaskViewButton' 0
+          Set-Reg $adv 'TaskbarAnimations' 0
+          Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' 'SearchboxTaskbarMode' 0
+          Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel' '{20D04FE0-3AEA-1069-A2D8-08002B30309D}' 0
+          Set-Reg 'HKLM:\SOFTWARE\Microsoft\ServerManager' 'DoNotOpenServerManagerAtLogon' 1
+          exit 0
+
+      # ------------------------------------------------------------------------
+      - name: 'Barra de tarefas transparente (TranslucentTB)'
+        continue-on-error: true    # se falhar, o resto da sessão continua normal
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $ProgressPreference = 'SilentlyContinue'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+          # Dependências do pacote MSIX (o Windows Server não tem Microsoft Store)
+          $tmp = Join-Path $env:TEMP 'tbdeps'
+          New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+          $deps = @{
+            'vclibs.appx' = 'https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx'
+            'uixaml.appx' = 'https://github.com/microsoft/microsoft-ui-xaml/releases/download/v2.8.6/Microsoft.UI.Xaml.2.8.x64.appx'
+          }
+          foreach ($d in $deps.GetEnumerator()) {
+            try {
+              $f = Join-Path $tmp $d.Key
+              Invoke-WebRequest -Uri $d.Value -OutFile $f -UseBasicParsing
+              Add-AppxPackage -Path $f -ErrorAction Stop
+            } catch { Write-Host "Dependência $($d.Key): $($_.Exception.Message)" }
+          }
+
+          choco install translucenttb -y --no-progress --limit-output
+
+          # Faz o TranslucentTB iniciar sozinho quando você entrar pelo RDP
+          $pkg = Get-AppxPackage -Name '*TranslucentTB*' | Select-Object -First 1
+          if ($pkg) {
+            $appId = (Get-AppxPackageManifest -Package $pkg).Package.Applications.Application.Id | Select-Object -First 1
+            $aumid = "$($pkg.PackageFamilyName)!$appId"
+            Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'TranslucentTB' -Value "explorer.exe shell:AppsFolder\$aumid"
+            Write-Host "TranslucentTB instalado: $aumid"
+          } else {
+            Write-Host 'TranslucentTB não instalou; ficou só a transparência nativa do Windows.'
+          }
+          exit 0
+
+      # ------------------------------------------------------------------------
+      - name: 'Instalar programas extras'
+        if: ${{ inputs.pacotes_choco != '' }}
+        continue-on-error: true
+        env:
+          PKGS: ${{ inputs.pacotes_choco }}
+        run: |
+          $list = @($env:PKGS -split '\s+' | Where-Object { $_ -match '^[A-Za-z0-9][A-Za-z0-9._-]*$' })
+          if ($list.Count -gt 0) { choco install @list -y --no-progress --limit-output }
+          exit 0
+
+      # ------------------------------------------------------------------------
+      - name: 'Dados de conexão'
+        run: |
+          $tsExe = (Get-Command tailscale.exe -ErrorAction SilentlyContinue).Source
+          if (-not $tsExe) { $tsExe = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe' }
+          $ip = (& $tsExe ip -4 2>$null | Select-Object -First 1)
+          if (-not $ip) { Write-Warning 'Não consegui ler o IP do Tailscale; veja o IP no painel do Tailscale.' }
+          $deadline = [DateTimeOffset]::FromUnixTimeSeconds([int64]$env:START_EPOCH).AddMinutes([int]$env:SESSION_MIN)
+          $msg = @(
+            '## RDP pronto',
+            '',
+            ('- Endereço (Tailscale): `{0}` (ou `github-rdp` se o MagicDNS estiver ligado)' -f $ip),
+            '- Usuário: `runneradmin`',
+            ('- Se pedir domínio: `{0}\runneradmin`' -f $env:COMPUTERNAME),
+            '- Senha: o valor do secret RDP_PASSWORD',
+            ('- Sessão encerra por volta de {0:HH:mm} UTC' -f $deadline.UtcDateTime),
+            '- Para encerrar antes: crie o arquivo `C:\parar.txt` na máquina ou cancele esta execução'
+          )
+          $msg | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          $msg | Out-Host
+          exit 0
+
+      # ------------------------------------------------------------------------
+      - name: 'Manter a sessão ativa'
+        run: |
+          $deadline = [DateTimeOffset]::FromUnixTimeSeconds([int64]$env:START_EPOCH).AddMinutes([int]$env:SESSION_MIN)
+          $stop = "$env:SystemDrive\parar.txt"
+          $i = 0
+          while ([DateTimeOffset]::UtcNow -lt $deadline) {
+            if (Test-Path $stop) { Write-Host 'parar.txt encontrado: encerrando.'; break }
+            if ($i % 45 -eq 0) {
+              $left = [int][Math]::Max(0, ($deadline - [DateTimeOffset]::UtcNow).TotalMinutes)
+              Write-Host ('[{0:HH:mm:ss}] sessão ativa, restam ~{1} min' -f (Get-Date), $left)
+            }
+            $i++
+            Start-Sleep -Seconds 20
+          }
+          Write-Host 'Encerrando a sessão.'
